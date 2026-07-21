@@ -6,13 +6,22 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
+import logging
 from typing import Callable
 from urllib.parse import urlparse
 
 from .ports import CallbackEvent, Capture, ControlStore
 
+log = logging.getLogger("meeting_api.zaki_control.callbacks")
 
 _TERMINAL = {"completed", "failed"}
+# Hub statuses that can NEVER succeed on retry — the Hub's contract refusal of an event that is
+# permanently unacceptable: 409 {failure:"invalid_state"} for a stale non-terminal lifecycle step
+# once the capture is already terminal, 410 for a subject that no longer exists, 422 for a body the
+# sealed schema rejects. The drain used to treat every non-2xx as retryable: attempts reached 97
+# live and six orphaned events had to be settled by hand in the staging DB while they blocked the
+# outbox (and, for terminal events, blocked erasure behind them).
+_PERMANENT_REFUSALS = frozenset({409, 410, 422})
 _FAILURE_CODES = {
     "join_denied", "kicked", "meeting_ended_early", "quota_exhausted",
     "invalid_meeting", "capture_timeout", "upstream_unavailable", "internal_failure",
@@ -352,6 +361,23 @@ class ControlCallbackDispatcher:
                             "X-Webhook-Signature": f"sha256={signature}",
                         },
                     )
+            except Exception:
+                # Transport failures (timeout, connect refusal) carry no verdict — retryable.
+                await self._store.mark_callback_failed(event.event_id)
+                continue
+            if response.status_code in _PERMANENT_REFUSALS:
+                # Marking the event delivered is the dead-letter: the outbox has no other lane,
+                # and leaving it pending re-earns the same refusal forever while every event
+                # queued behind it (including terminal settlements erasure waits on) starves.
+                log.warning(
+                    "outbox event %s dead-lettered on HTTP %s: "
+                    "hub refused as invalid_state — event is stale, not retryable",
+                    event.event_id,
+                    response.status_code,
+                )
+                await self._store.mark_callback_delivered(event.event_id)
+                continue
+            try:
                 body = response.json() if 200 <= response.status_code < 300 else None
                 if not (
                     isinstance(body, dict)
