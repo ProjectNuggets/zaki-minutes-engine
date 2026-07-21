@@ -103,6 +103,25 @@ def _as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
+def _meeting_end(value: object) -> datetime | None:
+    """Two feeders hand ``reconcile_capture_lifecycle`` a meeting row and they
+    disagree on shape: the sweep projection carries ``end_time`` as a datetime,
+    while crash recovery rebuilds the row through the meeting repo adapter,
+    which isoformats every timestamp. For a crash-before-bind capture that
+    recovery door is the ONLY settlement path, so refusing the string form
+    re-bounds the settlement with wall-clock-at-retry — and the deterministic
+    terminal event ID makes that wrong number permanent. Naive means UTC here,
+    by the same storage contract as ``_as_utc``."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
 def capture_seconds_at(capture, current: datetime, *, ended_at: datetime | None = None) -> int:
     """True captured seconds for a terminal settlement: the active window from
     start to the meeting's END, floored by any already-recorded total, capped by
@@ -300,9 +319,7 @@ class ControlCallbackDispatcher:
         # Reconciliation runs on ITS OWN clock, arbitrarily later than the meeting:
         # a terminal settlement here must be bounded by the meeting's recorded end,
         # not by wall-clock-at-reconcile (which settled 2033s for a 2-min meeting).
-        ended_at = meeting_row.get("end_time")
-        if not isinstance(ended_at, datetime):
-            ended_at = None
+        ended_at = _meeting_end(meeting_row.get("end_time"))
         for step in _RECOVERY_STEPS.get(state, ()):
             await self.record_capture_status(
                 capture,

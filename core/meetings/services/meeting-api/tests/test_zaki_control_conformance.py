@@ -704,19 +704,39 @@ def test_row_mapping_never_anchors_the_meter_on_creation_time():
     assert active.started_at == datetime(2026, 7, 21, 12, 0, 0)
 
 
+def _lobby_row_capture(state: str):
+    """A never-active capture as the REAL row adapter maps it, not hand-built.
+
+    The lobby-billing bug lived in ``_capture_from_row``'s created_at fallback;
+    ``created_at`` is NOT NULL DEFAULT now(), so a real row always carries one
+    and a capture seeded directly with ``started_at=None`` exercises a state the
+    broken mapping could never produce — the regression would pass unfixed."""
+    from meeting_api.zaki_control.adapters import SqlAlchemyControlStore
+
+    return SqlAlchemyControlStore._capture_from_row({
+        "capture_id": "cap-1", "tenant_id": "tenant-1", "user_id": "42",
+        "operation_id": "op-1", "reservation_id": "reserve-1",
+        "platform": "google_meet", "native_meeting_id": "abc-defg-hij",
+        "meeting_id": "meeting-1", "state": state, "failure_code": None,
+        "captured_seconds_total": 0, "max_capture_seconds": 3600,
+        "start_time": None, "end_time": None,
+        "created_at": datetime(2026, 7, 21, 11, 47, 13),
+    })
+
+
 async def test_lobby_only_capture_settles_zero_live_and_via_reconcile():
     """start_time NULL ⇒ no meter anchor ⇒ the hold releases in full (0 seconds),
     on the live stop path and on a reconcile sweep running long after the fact."""
     store = InMemoryControlStore()
-    capture = replace(_CAPTURE, state="awaiting_admission", started_at=None,
-                      max_capture_seconds=3600)
+    capture = _lobby_row_capture("awaiting_admission")
+    assert capture.started_at is None
     store.captures[capture.capture_id] = capture
     dispatcher = _meter_dispatcher(store, datetime(2026, 7, 21, 13, 0, 0, tzinfo=timezone.utc))
     await dispatcher.record_capture_status(capture, state="failed", failure_code="join_denied")
     assert await _usage_totals(store, "cap-1") == [0]
 
     store = InMemoryControlStore()
-    capture = replace(_CAPTURE, state="requested", started_at=None, max_capture_seconds=3600)
+    capture = _lobby_row_capture("requested")
     store.captures[capture.capture_id] = capture
     store.reconcile_meetings = [{
         "id": capture.meeting_id, "status": "failed",
@@ -747,6 +767,30 @@ async def test_reconcile_settles_the_meeting_end_not_the_reconcile_clock():
         assert await dispatcher.reconcile_once() == 1
         assert store.captures["cap-1"].state == "completed"
         assert await _usage_totals(store, "cap-1") == [90], f"lateness={lateness}"
+
+
+async def test_reconcile_accepts_the_crash_recovery_feeders_isoformat_end_time():
+    """Crash recovery (the capture-lease retry) rebuilds the meeting row through
+    the meeting repo adapter, which isoformats every timestamp — naive-UTC, per
+    the storage contract. For a crash-before-bind capture that door is the ONLY
+    settlement path, and the deterministic terminal event ID makes its number
+    permanent: dropping the string end re-settled wall-clock-at-retry (the
+    2033s-class bug this workstream exists to fix)."""
+    for end_time in ("2026-07-21T12:01:30", "2026-07-21T12:01:30Z"):
+        store = InMemoryControlStore()
+        capture = replace(_CAPTURE, state="requested",
+                          started_at=datetime(2026, 7, 21, 12, 0, 0),
+                          max_capture_seconds=3600)
+        store.captures[capture.capture_id] = capture
+        # The retry's clock is an hour past the meeting: the shape the Hub
+        # produces when it re-leases a capture op long after a crashed spawn.
+        dispatcher = _meter_dispatcher(store, datetime(2026, 7, 21, 13, 1, 30, tzinfo=timezone.utc))
+        await dispatcher.reconcile_capture_lifecycle({
+            "id": capture.meeting_id, "status": "completed",
+            "data": {}, "end_time": end_time,
+        })
+        assert store.captures["cap-1"].state == "completed"
+        assert await _usage_totals(store, "cap-1") == [90], f"end_time={end_time!r}"
 
 
 def test_capture_cap_and_floor_still_bound_an_explicit_meeting_end():
