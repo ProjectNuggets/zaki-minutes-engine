@@ -307,11 +307,18 @@ done
 echo "read index lists meeting + transcript + summary ✓"
 
 # ── stage: callback-settlement — the Hub-visible terminal usage event reached the sink ──────────
+# POLLED: the outbox drain sweeps on ZAKI_CONTROL_CALLBACK_INTERVAL_S (5s default) and a slow CI
+# runner can put the terminal pair one-or-two sweeps after the stop — a single-shot assert here
+# raced it and failed a healthy engine (PR #33's first run). Poll to a bound instead.
 STAGE=callback-settlement
-EVENTS=$(xcurl "http://localhost:$STUB_PORT/_events")
-echo "$EVENTS" | jget "[e for e in d if e.get('event_type')=='minutes.capture.usage' and (e.get('data') or {}).get('capture_id')=='$CAPTURE_ID' and ((e.get('data') or {}).get('metering') or {}).get('terminal') is True]" \
-  | grep -q "'capture_id': '$CAPTURE_ID'" \
-  || fail "no terminal minutes.capture.usage callback for $CAPTURE_ID reached the Hub sink: $EVENTS"
+DELIVERED=""
+for _i in $(seq 1 15); do
+  EVENTS=$(xcurl "http://localhost:$STUB_PORT/_events")
+  if echo "$EVENTS" | jget "[e for e in d if e.get('event_type')=='minutes.capture.usage' and (e.get('data') or {}).get('capture_id')=='$CAPTURE_ID' and ((e.get('data') or {}).get('metering') or {}).get('terminal') is True]" \
+    | grep -q "'capture_id': '$CAPTURE_ID'"; then DELIVERED=1; break; fi
+  sleep 3
+done
+[ -n "$DELIVERED" ] || fail "no terminal minutes.capture.usage callback for $CAPTURE_ID reached the Hub sink within 45s: $EVENTS"
 echo "terminal usage callback delivered ✓"
 
 # ── stage: lobby-spawn — the never-admitted capture (workstream A's zero-settlement case) ───────
