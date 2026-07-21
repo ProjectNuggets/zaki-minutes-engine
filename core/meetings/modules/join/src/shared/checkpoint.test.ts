@@ -1,7 +1,7 @@
 /** L2: a checkpoint screenshot is diagnostics — it must NEVER throw into the join,
  *  whatever the filesystem or the page does (the EROFS incident killed every hosted
  *  join ~1s after navigation for a debug PNG). */
-import { mkdtempSync, existsSync, rmSync } from "fs";
+import { mkdtempSync, existsSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { checkpoint, resetCheckpointDirForTest } from "./checkpoint";
@@ -30,8 +30,12 @@ async function main() {
   try { await checkpoint(pageThrows, "unit-b"); } catch { threw = true; }
   check("page.screenshot throw never propagates", !threw);
 
-  // 3. unwritable dir → disabled for the session, still never throws
-  process.env.BOT_SCREENSHOT_DIR = "/proc/definitely/not/writable";
+  // 3. unwritable dir → disabled for the session, still never throws.
+  //    A path UNDER A REGULAR FILE fails mkdir with ENOTDIR instantly on every OS —
+  //    the previous /proc path HUNG mkdirSync on GitHub's runners (procfs quirk).
+  const blocker = join(dir, "not-a-dir");
+  writeFileSync(blocker, "x");
+  process.env.BOT_SCREENSHOT_DIR = join(blocker, "sub");
   resetCheckpointDirForTest();
   threw = false;
   try { await checkpoint(pageOk, "unit-c"); await checkpoint(pageOk, "unit-d"); } catch { threw = true; }
