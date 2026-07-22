@@ -1,10 +1,16 @@
 """WP-M12 — the summary generator: candidates, prompt shape, the write, the barrier."""
+import contextlib
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
 import pytest
 
 from meeting_api.collector.fakes import InMemoryTranscriptStore
 from meeting_api.collector.summarizer import (
     MAX_PROMPT_CHARS,
     build_summary_messages,
+    openai_chat_llm,
     summarize_tick,
 )
 
@@ -106,3 +112,62 @@ def test_long_transcripts_keep_head_and_tail():
     assert len(body) < MAX_PROMPT_CHARS + 500
     assert "line 0 " in body and "line 599 " in body
     assert "elided for length" in body
+
+
+@contextlib.contextmanager
+def _chat_stub():
+    """Local OpenAI-shaped stub; yields (base_url, seen) where seen collects Authorization."""
+    seen: list[str | None] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            seen.append(self.headers.get("Authorization"))
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            body = json.dumps(
+                {"choices": [{"message": {"content": "## TL;DR\nStub said so."}}]}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):  # keep pytest output clean
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", seen
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+async def test_empty_token_omits_authorization_header():
+    """Self-host/no-auth-backend: token is "" → send no header at all.
+
+    Regression: ``{"Authorization": f"Bearer {token}"}`` yielded ``b'Bearer '``,
+    which httpx rejects with LocalProtocolError, failing every summarize_tick.
+    """
+    with _chat_stub() as (base_url, seen):
+        llm = openai_chat_llm(base_url, "", "m-1")
+        assert await llm([{"role": "user", "content": "hi"}]) == "## TL;DR\nStub said so."
+
+    assert seen == [None], f"expected no Authorization header, got {seen!r}"
+
+
+async def test_blank_token_omits_authorization_header():
+    with _chat_stub() as (base_url, seen):
+        llm = openai_chat_llm(base_url, "   ", "m-1")
+        await llm([{"role": "user", "content": "hi"}])
+
+    assert seen == [None], f"expected no Authorization header, got {seen!r}"
+
+
+async def test_real_token_still_sends_authorization_header():
+    with _chat_stub() as (base_url, seen):
+        llm = openai_chat_llm(base_url, "sk-live-123", "m-1")
+        await llm([{"role": "user", "content": "hi"}])
+
+    assert seen == ["Bearer sk-live-123"]
