@@ -85,7 +85,7 @@ def _headers(request_id="request-1", idempotency_key="key-1", **overrides):
     return headers
 
 
-def _client(monkeypatch, *, store=None, repo=None, runtime=None, callback_dispatcher=None):
+def _client(monkeypatch, *, store=None, repo=None, runtime=None, callback_dispatcher=None, config=None):
     monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "https://stt.example.test")
     monkeypatch.setenv("ADMIN_TOKEN", "meeting-token-test-secret-0123456789")
     app = FastAPI()
@@ -98,7 +98,7 @@ def _client(monkeypatch, *, store=None, repo=None, runtime=None, callback_dispat
     callback_dispatcher = callback_dispatcher or _SettlingDispatcher(store)
     app.include_router(build_router(
         store=store,
-        config=ControlConfig(enabled=True, operator_enabled=True, signing_secret=SECRET),
+        config=config or ControlConfig(enabled=True, operator_enabled=True, signing_secret=SECRET),
         meeting_repo=repo, runtime=runtime,
         command_publisher=publisher,
         retention_repo=retention_repo, retention_storage=retention_storage,
@@ -231,6 +231,39 @@ def test_control_capture_rejects_a_platform_outside_the_staging_egress_contract(
     assert response.status_code == 422
     # The refusal must stay inside the sealed ErrorResponse vocabulary.
     assert response.json()["code"] == "invalid_request"
+
+
+def test_control_capture_admits_teams_when_the_operator_declares_that_platform(monkeypatch):
+    """A deployment that declares teams in its admitted set captures a Teams URL, while a platform
+    it did NOT declare (zoom) stays refused inside the sealed ErrorResponse vocabulary."""
+    client, store, *_ = _client(
+        monkeypatch,
+        config=ControlConfig(
+            enabled=True, operator_enabled=True, signing_secret=SECRET,
+            admitted_platforms=frozenset({"google_meet", "teams"}),
+        ),
+    )
+    assert client.post(
+        "/api/zaki/control/v1/42/ensure", headers=_headers(), json=_ensure()
+    ).status_code == 200
+
+    teams = _capture()
+    teams.update({"platform": "teams", "meeting_url": "https://teams.microsoft.com/meet/1234567890"})
+    admitted = client.post(
+        "/api/zaki/control/v1/42/captures",
+        headers=_headers("capture-request", "capture-key"), json=teams,
+    )
+    assert admitted.status_code == 200
+    assert admitted.json()["state"] == "requested"
+
+    zoom = _capture("capture-zoom", "capture-zoom-key")
+    zoom.update({"platform": "zoom", "meeting_url": "https://acme.zoom.us/j/12345678901"})
+    refused = client.post(
+        "/api/zaki/control/v1/42/captures",
+        headers=_headers("capture-zoom", "capture-zoom-key"), json=zoom,
+    )
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "invalid_request"
 
 
 def test_ensure_binds_all_identities_and_replays_with_the_new_request_id(monkeypatch):

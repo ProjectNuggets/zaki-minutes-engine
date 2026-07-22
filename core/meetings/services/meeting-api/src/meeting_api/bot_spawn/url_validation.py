@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 from urllib.parse import urlparse
 
 
@@ -12,13 +13,36 @@ class UnsafeMeetingUrl(ValueError):
 
 _PLATFORM_HOSTS = {
     "google_meet": {"meet.google.com"},
-    "teams": {"teams.microsoft.com", "teams.live.com"},
 }
+
+# Teams' web client keeps the meeting id in the URL fragment (…/v2#/meet/<digits>). This mirrors
+# the sealed ``_TEAMS_MEET_PATH`` predicate in ``zaki_control.router``; it is duplicated here rather
+# than imported because ``router`` imports this module, so this module must not import back from it.
+_TEAMS_V2_FRAGMENT_MEET = re.compile(r"^/meet/\d{10,15}/?$")
+
+
+def _teams_host_is_approved(host: str) -> bool:
+    """Mirror the sealed zaki-control.v1 teams host predicate (validate.mjs /
+    meeting_url_matches_platform): consumer, enterprise-subdomain and US-gov/DoD Teams hosts.
+
+    The prior exact-match set ({teams.microsoft.com, teams.live.com}) silently narrowed this
+    bot_spawn gate below what the sealed control predicate admits, so an enterprise tenant on a
+    *.teams.microsoft.com subdomain (or a *.teams.microsoft.us gov/DoD host) passed the sealed
+    predicate and was then refused here — the two admission gates disagreed.
+    """
+    return (
+        host == "teams.live.com" or host.endswith(".teams.live.com")
+        or host == "teams.microsoft.com" or host.endswith(".teams.microsoft.com")
+        or host == "gov.teams.microsoft.us" or host == "dod.teams.microsoft.us"
+        or host.endswith(".teams.microsoft.us")
+    )
 
 
 def _host_is_approved(host: str, platform: object) -> bool:
     if platform == "zoom":
         return host == "zoom.us" or host.endswith(".zoom.us")
+    if platform == "teams":
+        return _teams_host_is_approved(host)
     if platform == "jitsi":
         configured = {
             value.strip().lower().rstrip(".")
@@ -128,8 +152,10 @@ def canonical_meeting_identity(url: object, *, platform: object) -> tuple[str, s
 
     Navigation keeps the approved, whitespace-trimmed URL intact so provider query parameters still
     reach the bot. The opaque identity deliberately normalizes host casing/trailing dots/default
-    HTTPS ports and ignores fragments/query decorations that do not identify a meeting. Callers
-    scope the returned identity to their own tenant boundary before persisting it.
+    HTTPS ports and ignores query decorations that do not identify a meeting. Fragments are ignored
+    too, EXCEPT the Teams web-client ``…/v2#/meet/<digits>`` form, whose meeting id lives in the
+    fragment — that segment is folded in so distinct v2 meetings do not collide on one identity.
+    Callers scope the returned identity to their own tenant boundary before persisting it.
     """
     raw = validate_meeting_url(url, platform=platform)
     parsed = urlparse(raw)
@@ -141,4 +167,14 @@ def canonical_meeting_identity(url: object, *, platform: object) -> tuple[str, s
     if port not in (None, 443):
         raise UnsafeMeetingUrl("meeting_url must use the default HTTPS port")
     path = parsed.path.rstrip("/") or "/"
+    # Teams routes the meeting inside the URL fragment (https://<host>/v2#/meet/<digits>), so
+    # urlparse leaves every distinct v2 meeting with the same "/v2" path; without folding the
+    # fragment's meeting segment in, they would all collide on one identity within a tenant. Take
+    # only the ``/meet/<digits>`` segment (dropping any ?passcode decoration) so distinct meetings
+    # get distinct identities and the same meeting stays stable. Other platforms carry the meeting
+    # in the path, so their fragments remain ignored decoration.
+    if platform == "teams" and path == "/v2" and parsed.fragment:
+        fragment_path = urlparse(f"https://x{parsed.fragment}").path.rstrip("/")
+        if _TEAMS_V2_FRAGMENT_MEET.match(fragment_path):
+            path = f"/v2{fragment_path}"
     return raw, f"https://{host}{path}"

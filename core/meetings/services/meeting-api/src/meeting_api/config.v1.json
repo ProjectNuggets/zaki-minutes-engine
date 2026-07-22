@@ -519,8 +519,15 @@
   {
    "key": "ZAKI_MINUTES_JITSI_HOSTS",
    "class": "defaulted",
-   "default": "(unset — only meet.jit.si is recognized, and the control plane admits google_meet only)",
+   "default": "(unset — only meet.jit.si is recognized; admitted capture platforms are set separately via ZAKI_MINUTES_ADMITTED_PLATFORMS)",
    "description": "optional comma-separated operator-declared Jitsi hostnames; the sealed control URL predicate receives this as validated configuration so ambient process environment never changes conformance",
+   "targets": []
+  },
+  {
+   "key": "ZAKI_MINUTES_ADMITTED_PLATFORMS",
+   "class": "defaulted",
+   "default": "google_meet",
+   "description": "comma-separated set of meeting platforms the control plane admits for capture; each token must be in the sealed zaki-control.v1 CaptureRequest platform enum (google_meet, zoom, teams, jitsi). Parsed once at router construction into ControlConfig.admitted_platforms and consulted by the capture admission gate; unset keeps the historical google_meet-only egress boundary. Set to \"google_meet,teams\" to admit Microsoft Teams.",
    "targets": []
   },
   {

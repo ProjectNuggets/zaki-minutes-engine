@@ -47,6 +47,10 @@ _HOSTNAME = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-
 _CONTROL_AUDIENCE = "zaki-control.v1"
 _MIN_CAPTURE_SECONDS = 60
 _MAX_CAPTURE_SECONDS = 4 * 60 * 60
+# The sealed zaki-control.v1 CaptureRequest platform enum (zaki-control.schema.json). The operator's
+# admitted set is validated against this so ambient env can only ever NARROW it, never invent a
+# platform the sealed contract does not already carry.
+_SEALED_PLATFORMS = frozenset({"google_meet", "zoom", "teams", "jitsi"})
 
 
 def _utc_now() -> datetime:
@@ -65,6 +69,10 @@ class ControlConfig:
     # explicitly into the sealed URL predicate.  The contract forbids ambient process environment
     # from changing conformance, so the predicate itself never reads os.environ.
     jitsi_hosts: tuple[str, ...] = ()
+    # The sealed-enum platforms this deployment admits for capture. Unset defaults to google_meet
+    # only (the historical egress boundary); an operator widens it via ZAKI_MINUTES_ADMITTED_PLATFORMS.
+    # Read once at router construction, never re-read per request.
+    admitted_platforms: frozenset[str] = frozenset({"google_meet"})
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "ControlConfig | None":
@@ -90,12 +98,20 @@ class ControlConfig:
         )
         if any(len(host) > 253 or not _HOSTNAME.fullmatch(host) for host in hosts):
             raise RuntimeError("ZAKI Minutes control has an invalid operator Jitsi host list")
+        admitted_platforms = frozenset(
+            token.strip().lower()
+            for token in values.get("ZAKI_MINUTES_ADMITTED_PLATFORMS", "google_meet").split(",")
+            if token.strip()
+        )
+        if not admitted_platforms or not admitted_platforms <= _SEALED_PLATFORMS:
+            raise RuntimeError("ZAKI Minutes control has an invalid admitted-platform set")
         return cls(
             enabled=True,
             operator_enabled=values.get("ZAKI_MINUTES_OPERATOR_ENABLED", "false").lower() == "true",
             signing_secret=secret,
             max_capture_seconds=max_capture_seconds,
             jitsi_hosts=hosts,
+            admitted_platforms=admitted_platforms,
         )
 
 
@@ -579,14 +595,13 @@ def build_router(
         body, error = await _body(request, "CaptureRequest", request_id=x_request_id)
         if error:
             return error
-        # ZAKI's staging network contract currently permits only Google Meet
-        # browser dependencies. Keep the server-side admission aligned with
-        # that egress boundary even if a compromised/older Hub bypasses its
-        # Google-only browser parser.
+        # The deployment's admitted-platform set (ZAKI_MINUTES_ADMITTED_PLATFORMS, a subset of the
+        # sealed CaptureRequest enum, google_meet by default) is the egress boundary: only declared
+        # platforms are served, even if a compromised/older Hub bypasses its browser parser.
         # `invalid_request` is the only ErrorResponse code the sealed vocabulary offers for a
         # well-formed request this deployment refuses to serve; an out-of-vocabulary code would
         # itself fail the contract.
-        if body.get("platform") != "google_meet":
+        if body.get("platform") not in config.admitted_platforms:
             return _control_error(422, "invalid_request", request_id=x_request_id)
         if not _mutation_headers_match(body, x_request_id, idempotency_key):
             return _control_error(422, "invalid_request", request_id=x_request_id)
