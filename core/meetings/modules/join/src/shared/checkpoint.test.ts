@@ -12,7 +12,8 @@ const check = (name: string, ok: boolean) => {
   if (!ok) failed++;
 };
 
-const pageOk = { screenshot: async (_: unknown) => Buffer.alloc(0) } as never;
+let shots = 0;
+const pageOk = { screenshot: async (_: unknown) => { shots++; return Buffer.alloc(0); } } as never;
 const pageThrows = { screenshot: async () => { throw new Error("EROFS: read-only file system"); } } as never;
 
 async function main() {
@@ -32,14 +33,24 @@ async function main() {
 
   // 3. unwritable dir → disabled for the session, still never throws.
   //    A path UNDER A REGULAR FILE fails mkdir with ENOTDIR instantly on every OS —
-  //    the previous /proc path HUNG mkdirSync on GitHub's runners (procfs quirk).
+  //    the previous /proc path HUNG mkdirSync on GitHub's runners. The mechanism, measured
+  //    in node:22-bookworm: mkdir inside procfs reports ENOENT rather than EPERM, so
+  //    recursive mkdirSync walks up to /proc, finds it present, retries the child, gets
+  //    ENOENT again — a 100%-CPU spin that never returns. macOS has no /proc, so it threw
+  //    there and every local run passed in <1s while CI burned the 6h job timeout. Note a
+  //    chmod-0500 dir would NOT work either: root ignores it, so a root CI container would
+  //    silently skip this check. ENOTDIR is the only shape that holds everywhere.
   const blocker = join(dir, "not-a-dir");
   writeFileSync(blocker, "x");
   process.env.BOT_SCREENSHOT_DIR = join(blocker, "sub");
   resetCheckpointDirForTest();
   threw = false;
+  shots = 0;
   try { await checkpoint(pageOk, "unit-c"); await checkpoint(pageOk, "unit-d"); } catch { threw = true; }
   check("unwritable dir never propagates", !threw);
+  // Proves the directory was genuinely rejected: without this, a path that quietly became
+  // creatable would still pass the check above while testing nothing at all.
+  check("unwritable dir disables capture for the session", shots === 0);
 
   delete process.env.BOT_SCREENSHOT_DIR;
   resetCheckpointDirForTest();

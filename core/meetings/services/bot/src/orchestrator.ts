@@ -100,7 +100,16 @@ export function createOrchestrator(inv: Invocation, deps: OrchestratorDeps) {
     if (status === 'failed') {
       // The reason used to travel ONLY inside the callback body — a hosted join could die
       // with an empty pod log (the EROFS-screenshot incident). Terminal failures print.
-      console.error(`[bot] terminal failed (stage=${extra.failure_stage ?? '?'}, reason=${extra.completion_reason ?? '?'}): ${extra.reason ?? ''}`);
+      // Pod logs reach a wider audience than the control plane, and a join-stage `String(e)`
+      // routinely embeds the meeting URL (Playwright quotes the page it navigated to). The
+      // ORIGIN is kept and only the path/query dropped: the meeting id and any ?pwd= token
+      // live there, while the origin is what an operator actually reads — so the #530
+      // "control plane unreachable at boot (http://api:8080, redis://cache:6379)" message,
+      // whose endpoints carry no path, survives intact. Redacted HERE ONLY; the lifecycle
+      // event below keeps the full reason, as the control plane already holds the meeting.
+      const forLog = String(extra.reason ?? '')
+        .replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s\/?#)>\]",;]+)([\/?#][^\s)>\]",;]*)/gi, (_m, origin: string) => `${origin}/<redacted>`);
+      console.error(`[bot] terminal failed (stage=${extra.failure_stage ?? '?'}, reason=${extra.completion_reason ?? '?'}): ${forLog}`);
     }
     await deps.lifecycle.emit({ ...base, status, ...extra });
   };

@@ -117,6 +117,23 @@ verbatim to the **browser console** (`api failure …` / `meeting action failed 
 presented error. Support and self-hosters debug from the console line; the on-screen headline tells
 the user which layer to suspect.
 
+## Meeting links are redacted from bot pod logs
+
+A bot that ends in a terminal failure prints one line to its pod log, so a hosted join can never die
+with an empty log:
+
+```text
+[bot] terminal failed (stage=joining, reason=join_failure): navigating to "https://meet.google.com/<redacted>"
+```
+
+Meeting URLs are reduced to their **origin** there. The path and query are what carry the meeting id
+and any `?pwd=` passcode, and pod logs reach a wider audience than the control plane. The **full**
+reason, URL intact, still travels on the `lifecycle.v1` event — so the meeting API and dashboard are
+unaffected, and that is where to read the exact link when you need it.
+
+Diagnostics whose endpoints carry no path are untouched, so this does not cost you any infra signal:
+`control plane unreachable at boot (http://api:8080, redis://cache:6379)` prints verbatim.
+
 ## A bot on a fresh k8s node fails instantly with exit code 3 (`control_plane_unreachable`)
 
 On Kubernetes each bot is a bare Pod, and a freshly autoscaled node's network can take up to a few

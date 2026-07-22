@@ -397,6 +397,52 @@ async function main(): Promise<void> {
     check('gate reachable: secondary channel NEVER probed (fast path, zero added latency)', secondaryProbed === 0, `probed=${secondaryProbed}`);
   }
 
+  // ── terminal-failure POD LOG redaction: meeting URLs lose their path, diagnostics keep theirs ──
+  // The pod log reaches a wider audience than the control plane, and a join-stage `String(e)`
+  // routinely embeds the meeting URL. Only the path/query is dropped — the meeting id and any
+  // ?pwd= token live there. The ORIGIN survives, which is what keeps the #530
+  // "control plane unreachable at boot (...)" diagnostic readable: its endpoints carry no path,
+  // so that message passes through byte-for-byte. Both halves are asserted here because either
+  // one silently regressing is a real incident: over-redaction blinds the operator, under-
+  // redaction writes a joinable meeting link to the pod log.
+  {
+    /** Runs `fn` with console.error captured, returns the `[bot] terminal failed` lines. */
+    const podLog = async (fn: () => Promise<unknown>): Promise<string> => {
+      const lines: string[] = [];
+      const orig = console.error;
+      console.error = (...a: unknown[]) => { lines.push(a.map(String).join(' ')); };
+      try { await fn(); } finally { console.error = orig; }
+      return lines.filter((l) => l.includes('[bot] terminal failed')).join('\n');
+    };
+    const throwingJoin = (msg: string): JoinDriver => ({
+      async join() { throw new Error(msg); },
+      onRemoval() { return () => { /* */ }; }, async leave() { /* */ }, async withdraw() { /* */ },
+    });
+    const runWith = async (msg: string) => {
+      const lc = recordingSink();
+      const log = await podLog(() => createOrchestrator(inv(), {
+        lifecycle: lc, join: throwingJoin(msg), pipeline: noopPipeline(), acts: noopActs(),
+      }).run());
+      return { log, event: last(lc.events) };
+    };
+
+    // (a) a meeting URL is reduced to its ORIGIN — meeting id and ?pwd= token must not reach the log.
+    const meet = await runWith('Timeout 30000ms exceeded navigating to "https://meet.google.com/abc-defg-hij?pwd=s3cret"');
+    check('redaction: pod log keeps the origin', meet.log.includes('https://meet.google.com/<redacted>'), meet.log);
+    check('redaction: pod log drops the meeting id', !meet.log.includes('abc-defg-hij'), meet.log);
+    check('redaction: pod log drops the ?pwd= token', !meet.log.includes('s3cret'), meet.log);
+    // Redacted in the LOG ONLY — the lifecycle event still carries the full reason, since the
+    // control plane already holds the meeting and operators debug from the event, not the log.
+    check('redaction: lifecycle event keeps the FULL reason', String(meet.event.reason ?? '').includes('abc-defg-hij?pwd=s3cret'), JSON.stringify(meet.event.reason));
+
+    // (b) the #530 diagnostic has no URL PATH, so it must survive byte-for-byte — both origins intact.
+    const diag = 'control_plane_unreachable: control plane unreachable at boot (http://api:8080, redis://cache:6379); refused to join';
+    const infra = await runWith(diag);
+    check('redaction: #530 keeps http origin', infra.log.includes('http://api:8080'), infra.log);
+    check('redaction: #530 keeps redis origin', infra.log.includes('redis://cache:6379'), infra.log);
+    check('redaction: #530 diagnostic is untouched', infra.log.includes(diag), infra.log);
+  }
+
   if (failed) { console.error(`\n❌ orchestrator (L2): ${failed} check(s) FAILED.`); process.exit(1); }
   console.log('\n✅ orchestrator (L2): the meeting machine drives a schema-valid lifecycle.v1 sequence and routes transcript.v1 — offline, every port faked.');
 }
