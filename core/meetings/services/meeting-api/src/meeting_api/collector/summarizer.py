@@ -102,11 +102,16 @@ def openai_chat_llm(base_url: str, token: str, model: str, *, timeout_s: float =
     if not url.endswith("/v1/chat/completions"):
         url = f"{url}/v1/chat/completions"
 
+    # No token (self-host / no-auth backend) → send no header. "Bearer " with an
+    # empty value is an illegal header value and httpx rejects it outright.
+    token = token.strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+
     async def call(messages: list[dict]) -> str:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
             response = await client.post(
                 url,
-                headers={"Authorization": f"Bearer {token}"},
+                headers=headers,
                 json={"model": model, "messages": messages, "temperature": 0.2},
             )
             response.raise_for_status()
