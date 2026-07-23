@@ -14,6 +14,7 @@ export interface AgentOnMeetingInput {
   native_id: string; // the meeting's native id
   meeting_url?: string; // optional — derived for google_meet when absent
   bot_name?: string;
+  language?: string; // ISO code forcing a single STT language; omitted ⇒ Whisper auto-detects
 }
 
 export interface AgentOnMeetingState {
@@ -45,6 +46,7 @@ export async function agentOnMeeting(input: AgentOnMeetingInput): Promise<AgentO
       native_meeting_id: native_id,
       meeting_url: meetingUrlFor(platform, native_id, input.meeting_url),
       bot_name: input.bot_name ?? defaultBotName(),
+      ...(input.language ? { language: input.language } : {}),
     }),
   });
   // Step 2 — AGENT domain: enable the copilot (POST /api/meeting/process). Surface a failure, don't throw.

@@ -19,6 +19,7 @@ import { LayoutServiceId } from "../workbench/layout";
 import { Icon } from "../ui-kit";
 import { parseMeetingInput } from "./meetingId";
 import { getJitsiHosts } from "./jitsiHosts";
+import { LANGUAGE_OPTIONS } from "./languages";
 import { presentError } from "./apiClient";
 import { refreshMeetings } from "./liveMeetings";
 import { getCalendarConfig, setCalendarConfig, syncCalendarNow, type CalendarSyncStamp } from "./plannedApi";
@@ -136,6 +137,7 @@ function ConnectCalendarModal({ onClose, onConnected }: { onClose: () => void; o
 /** The drop-a-bot card's inline sender — same POST /api/bots edge and error taxonomy as the sidebar. */
 function DropBotInline() {
   const [url, setUrl] = useState("");
+  const [lang, setLang] = useState("");
   const [sent, setSent] = useState<null | "sending" | "ok" | "err">(null);
   const [msg, setMsg] = useState<string | null>(null);
   const send = async () => {
@@ -148,7 +150,7 @@ function DropBotInline() {
       const r = await fetch("/api/bots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: parsed.platform, native_meeting_id: parsed.native_meeting_id, meeting_url: u, bot_name: defaultBotName() }),
+        body: JSON.stringify({ platform: parsed.platform, native_meeting_id: parsed.native_meeting_id, meeting_url: u, bot_name: defaultBotName(), ...(lang ? { language: lang } : {}) }),
       });
       if (r.ok) {
         setSent("ok"); setUrl("");
@@ -168,6 +170,10 @@ function DropBotInline() {
       <div style={{ display: "flex", gap: 6 }}>
         <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }}
           placeholder="Paste a meeting link (Meet / Zoom / Teams / Jitsi)…" style={fieldStyle} />
+        <select value={lang} onChange={(e) => setLang(e.target.value)} title="Meeting language (auto-detect by default)"
+          style={{ ...fieldStyle, flex: "none" }}>
+          {LANGUAGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
         <button onClick={() => void send()} disabled={!url.trim() || sent === "sending"}
           style={{ flex: "none", background: url.trim() ? "var(--accent)" : "var(--panel2)", color: url.trim() ? "var(--on-accent)" : "var(--t3)", border: "none", borderRadius: 7, padding: "0 10px", fontSize: 12, fontWeight: 600, cursor: url.trim() ? "pointer" : "default" }}>
           {sent === "sending" ? "…" : "Send bot"}

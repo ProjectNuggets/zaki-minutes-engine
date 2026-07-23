@@ -60,6 +60,18 @@ describe("agentOnMeeting — cookbook composition over two domain contracts", ()
     expect(calls()).toHaveLength(1);                                 // process was never called
   });
 
+  it("includes language in the bot body only when set (auto-detect omits it)", async () => {
+    fetchMock.mockResolvedValueOnce(ok({ status: "requested" }));
+    fetchMock.mockResolvedValueOnce(ok({ resumed_from: "0-0" }));
+    await agentOnMeeting({ platform: "google_meet", native_id: "abc-defg-hij", language: "de" });
+    expect(bodyOf(calls()[0].init)).toMatchObject({ language: "de" });
+
+    fetchMock.mockResolvedValueOnce(ok({ status: "requested" }));
+    fetchMock.mockResolvedValueOnce(ok({ resumed_from: "0-0" }));
+    await agentOnMeeting({ platform: "google_meet", native_id: "abc-defg-hij" });
+    expect(bodyOf(calls()[2].init)).not.toHaveProperty("language");
+  });
+
   it("is deterministic: same input ⇒ identical call sequence", async () => {
     const run = async () => {
       fetchMock.mockResolvedValueOnce(ok({ status: "requested" }));
