@@ -162,9 +162,11 @@ async function main(): Promise<void> {
     const pcm = new Float32Array(1600).fill(0.05);
     await createTranscribe(baseInv({ transcriptionServiceUrl: 'http://stt.test', task: null }))(pcm);
     await createTranscribe(baseInv({ transcriptionServiceUrl: 'http://stt.test', task: 'translate' }))(pcm);
+    await createTranscribe(baseInv({ transcriptionServiceUrl: 'http://stt.test', task: '' }))(pcm);
     (globalThis as any).fetch = realFetch;
     check('invocation.task=null → defaults to explicit "transcribe" on the wire', taskParts[0] === 'transcribe', JSON.stringify(taskParts[0]));
     check('invocation.task="translate" rides the task form part', taskParts[1] === 'translate', JSON.stringify(taskParts[1]));
+    check('invocation.task="" (empty) → still defaults to "transcribe" (|| guards the empty string)', taskParts[2] === 'transcribe', JSON.stringify(taskParts[2]));
   }
 
   if (failed) { console.error(`\n❌ pipeline (L3): ${failed} check(s) FAILED.`); process.exit(1); }
