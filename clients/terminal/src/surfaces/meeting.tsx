@@ -17,7 +17,7 @@ import { usePreviewPinTab } from "./previewPinTab";
 import { defaultBotName } from "./defaultBotName";
 import { parseMeetingInput } from "./meetingId";
 import { getJitsiHosts } from "./jitsiHosts";
-import { LANGUAGE_OPTIONS } from "./languages";
+import { LANGUAGE_OPTIONS, LANGUAGE_PICKER_HINT } from "./languages";
 import { mintTranscriptShare, mintInvite, listSharedMemberships, type Membership } from "./workspaceApi";
 import { deletePlannedMeeting, getCalendarConfig, setCalendarConfig, getCalendarSyncStatus, syncCalendarNow, type CalendarConfig, type CalendarSyncStamp } from "./plannedApi";
 import { prepTabDescriptor, prepDraftTabDescriptor } from "./meetingPrep";
@@ -693,7 +693,7 @@ function MeetingsList() {
         <div style={{ display: "flex", gap: 6 }}>
           <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addBot(); }}
             placeholder="Paste a meeting link (Meet / Zoom / Teams / Jitsi)…" style={{ flex: 1, minWidth: 0, background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 7, padding: "6px 8px", color: "var(--t1)", fontSize: 12, outline: "none" }} />
-          <select value={lang} onChange={(e) => setLang(e.target.value)} title="Meeting language (auto-detect by default)"
+          <select value={lang} onChange={(e) => setLang(e.target.value)} title="Meeting language — keep Auto-detect for meetings spoken in multiple languages"
             style={{ flex: "none", fontSize: 12, padding: "4px 6px", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--t1)" }}>
             {LANGUAGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
@@ -702,6 +702,7 @@ function MeetingsList() {
             {sent === "sending" ? "…" : "Add bot"}
           </button>
         </div>
+        <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 4, lineHeight: 1.4 }}>{LANGUAGE_PICKER_HINT}</div>
         {sent === "ok" && <div style={{ fontSize: 11, color: "var(--green)", marginTop: 5, lineHeight: 1.4 }}>Bot sent — admit it in the meeting; it appears here once it starts transcribing.</div>}
         {sent === "err" && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 5, lineHeight: 1.4 }}>{errMsg ?? "Couldn't send."}</div>}
         <div style={{ marginTop: 8 }}>

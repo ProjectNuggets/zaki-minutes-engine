@@ -19,7 +19,7 @@ import { LayoutServiceId } from "../workbench/layout";
 import { Icon } from "../ui-kit";
 import { parseMeetingInput } from "./meetingId";
 import { getJitsiHosts } from "./jitsiHosts";
-import { LANGUAGE_OPTIONS } from "./languages";
+import { LANGUAGE_OPTIONS, LANGUAGE_PICKER_HINT } from "./languages";
 import { presentError } from "./apiClient";
 import { refreshMeetings } from "./liveMeetings";
 import { getCalendarConfig, setCalendarConfig, syncCalendarNow, type CalendarSyncStamp } from "./plannedApi";
@@ -170,7 +170,7 @@ function DropBotInline() {
       <div style={{ display: "flex", gap: 6 }}>
         <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }}
           placeholder="Paste a meeting link (Meet / Zoom / Teams / Jitsi)…" style={fieldStyle} />
-        <select value={lang} onChange={(e) => setLang(e.target.value)} title="Meeting language (auto-detect by default)"
+        <select value={lang} onChange={(e) => setLang(e.target.value)} title="Meeting language — keep Auto-detect for meetings spoken in multiple languages"
           style={{ ...fieldStyle, flex: "none" }}>
           {LANGUAGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
@@ -179,6 +179,7 @@ function DropBotInline() {
           {sent === "sending" ? "…" : "Send bot"}
         </button>
       </div>
+      <div style={{ fontSize: 11, color: "var(--t3)", lineHeight: 1.4 }}>{LANGUAGE_PICKER_HINT}</div>
       {sent === "ok" && <div style={{ fontSize: 11, color: "var(--green)", lineHeight: 1.4 }}>Bot sent — admit it in the meeting.</div>}
       {sent === "err" && msg && <div role="alert" style={{ fontSize: 11, color: "var(--danger)", lineHeight: 1.4 }}>⚠ {msg}</div>}
     </div>

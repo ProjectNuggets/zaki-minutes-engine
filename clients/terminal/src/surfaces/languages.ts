@@ -20,3 +20,10 @@ export const LANGUAGE_OPTIONS: { value: string; label: string }[] = [
   { value: "pl", label: "Polish" },
   { value: "uk", label: "Ukrainian" },
 ];
+
+/** Shown beside the picker. A specific pick FORCES single-language decode, so a genuinely
+ *  multilingual meeting should stay on Auto-detect: forcing one language decodes every window
+ *  as that language and suppresses the others (see docs how-to/send-a-bot, "Forced" vs "Auto").
+ *  The selector reliably helps only MONOLINGUAL non-English meetings. */
+export const LANGUAGE_PICKER_HINT =
+  "Multiple languages spoken? Keep Auto-detect — picking one transcribes only that language.";
