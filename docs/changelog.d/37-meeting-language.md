@@ -1,4 +1,4 @@
-- **Pick your meeting's transcription language, or keep auto-detect (#35).** The bot-start box in the
+- **Pick your meeting's transcription language, or keep auto-detect (#37).** The bot-start box in the
   terminal now has a language selector — choose a specific language (e.g. German, Arabic) so
   non-English meetings transcribe reliably instead of leaning on the provider's auto-detect, or leave
   it on *Auto-detect* (the default, unchanged behaviour). `POST /bots` already accepts the `language`
