@@ -147,6 +147,26 @@ async function main(): Promise<void> {
     check('no transcriptionModel → default whisper-1 (wire unchanged)', modelParts[1] === 'whisper-1', JSON.stringify(modelParts[1]));
   }
 
+  // ── 5) createTranscribe threads invocation.task → the STT wire, defaulting to "transcribe" ──
+  // The `task` field was accepted by the invocation and the STT service but dropped at the
+  // client (never emitted). createTranscribe must default a null/unset invocation.task to the
+  // explicit "transcribe" — never let the backend fall back to its own default (translate risk).
+  {
+    const realFetch = globalThis.fetch;
+    const taskParts: Array<string | null> = [];
+    (globalThis as any).fetch = async (_url: unknown, init: { body: Buffer }) => {
+      const m = Buffer.from(init.body).toString('latin1').match(/name="task"\r\n\r\n([^\r]*)\r\n/);
+      taskParts.push(m ? m[1] : null);
+      return new Response(JSON.stringify({ text: '', language: 'en', duration: 0.1, segments: [] }), { status: 200 });
+    };
+    const pcm = new Float32Array(1600).fill(0.05);
+    await createTranscribe(baseInv({ transcriptionServiceUrl: 'http://stt.test', task: null }))(pcm);
+    await createTranscribe(baseInv({ transcriptionServiceUrl: 'http://stt.test', task: 'translate' }))(pcm);
+    (globalThis as any).fetch = realFetch;
+    check('invocation.task=null → defaults to explicit "transcribe" on the wire', taskParts[0] === 'transcribe', JSON.stringify(taskParts[0]));
+    check('invocation.task="translate" rides the task form part', taskParts[1] === 'translate', JSON.stringify(taskParts[1]));
+  }
+
   if (failed) { console.error(`\n❌ pipeline (L3): ${failed} check(s) FAILED.`); process.exit(1); }
   console.log('\n✅ pipeline (L3): capture→lane→stt→bot.TranscriptSink.publish emits schema-valid, correctly-attributed transcript.v1 segments (real gmeet lane · mock stt · capturing sink).');
 }

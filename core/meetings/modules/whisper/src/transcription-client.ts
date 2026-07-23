@@ -47,6 +47,8 @@ export interface TranscriptionClientConfig {
    *  (Groq, vLLM, gateways) need their served name; the bundled unit ignores it (its model is
    *  the unit's own MODEL_SIZE). Default: "whisper-1". */
   model?: string;
+  /** STT task: "transcribe" (default) or "translate". Emitted as the `task` form part when set. */
+  task?: string;
 }
 
 /** The STT boundary's FAILURE vocabulary (P5 + P18: an adapter must translate the
@@ -115,6 +117,7 @@ export class TranscriptionClient {
   private maxSpeechDurationSec: number | undefined;
   private minSilenceDurationMs: number | undefined;
   private model: string;
+  private task: string | undefined;
   constructor(config: TranscriptionClientConfig) {
     // Ensure serviceUrl ends with the transcriptions endpoint
     this.serviceUrl = config.serviceUrl.replace(/\/+$/, '');
@@ -128,6 +131,7 @@ export class TranscriptionClient {
     this.maxSpeechDurationSec = config.maxSpeechDurationSec;
     this.minSilenceDurationMs = config.minSilenceDurationMs;
     this.model = config.model ?? 'whisper-1';
+    this.task = config.task;
   }
 
   /**
@@ -191,6 +195,10 @@ export class TranscriptionClient {
     parts.push(formPart(boundary, 'model', this.model));
     parts.push(formPart(boundary, 'response_format', 'verbose_json'));
     if (language) parts.push(formPart(boundary, 'language', language));
+    // Task (transcribe/translate) — explicit so the backend never defaults to translate. Routed
+    // through formPart so an untrusted task (it can arrive from a direct POST /bots body) cannot
+    // inject CR/LF framing, the same vector crlf.test.ts guards for language/prompt/model.
+    if (this.task) parts.push(formPart(boundary, 'task', this.task));
     // Request word-level timestamps.
     parts.push(formPart(boundary, 'timestamp_granularities', 'word'));
     // Max speech segment duration (controls how often Whisper splits segments).
