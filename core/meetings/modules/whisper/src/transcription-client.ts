@@ -85,6 +85,22 @@ function classifyHttp(status: number, detail?: string): TranscriptionError {
   return new TranscriptionError('unknown', status, detail, false);
 }
 
+/** Encode one text/number form-data part. CR and LF are stripped from the value: the multipart
+ *  body is hand-built, so a CR/LF-bearing value could otherwise forge a `--boundary` or a
+ *  `Content-Disposition:` header and inject or split parts (a language/prompt/model — and `task`
+ *  once #37 lands — can arrive untrusted from a direct POST /bots body). Strip, not reject, so a
+ *  malformed value can't drop the whole transcription window; no legitimate STT field value
+ *  contains a newline. See crlf.test.ts.
+ *  ponytail: field names are our own constants here, so only the value is sanitized. */
+function formPart(boundary: string, name: string, value: string | number): Buffer {
+  const clean = String(value).replace(/[\r\n]/g, '');
+  return Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="${name}"\r\n\r\n` +
+    `${clean}\r\n`
+  );
+}
+
 /**
  * HTTP client for the transcription-service.
  * Converts Float32Array audio to WAV, sends as multipart form,
@@ -169,62 +185,20 @@ export class TranscriptionClient {
     parts.push(wavBuffer);
     parts.push(Buffer.from('\r\n'));
 
-    // Model part (required by OpenAI-compatible API; validating backends reject unknown ids)
-    parts.push(Buffer.from(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="model"\r\n\r\n` +
-      `${this.model}\r\n`
-    ));
-
-    // Response format part
-    parts.push(Buffer.from(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="response_format"\r\n\r\n` +
-      `verbose_json\r\n`
-    ));
-
-    // Language part (if specified)
-    if (language) {
-      parts.push(Buffer.from(
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="language"\r\n\r\n` +
-        `${language}\r\n`
-      ));
-    }
-
-    // Request word-level timestamps
-    parts.push(Buffer.from(
-      `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="timestamp_granularities"\r\n\r\n` +
-      `word\r\n`
-    ));
-
-    // Max speech segment duration (controls how often Whisper splits segments)
-    if (this.maxSpeechDurationSec !== undefined) {
-      parts.push(Buffer.from(
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="max_speech_duration_s"\r\n\r\n` +
-        `${this.maxSpeechDurationSec}\r\n`
-      ));
-    }
-
-    // Min silence duration for VAD segment splitting (lower = more splits at natural pauses)
-    if (this.minSilenceDurationMs !== undefined) {
-      parts.push(Buffer.from(
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="min_silence_duration_ms"\r\n\r\n` +
-        `${this.minSilenceDurationMs}\r\n`
-      ));
-    }
-
-    // Prompt: previous confirmed text as context for streaming continuity
-    if (prompt) {
-      parts.push(Buffer.from(
-        `--${boundary}\r\n` +
-        `Content-Disposition: form-data; name="prompt"\r\n\r\n` +
-        `${prompt}\r\n`
-      ));
-    }
+    // Text parts — all via formPart, which strips CR/LF from the value so no caller-supplied
+    // string can forge boundary/header framing (see the helper's note + crlf.test.ts).
+    // model: required by OpenAI-compatible API; validating backends reject unknown ids.
+    parts.push(formPart(boundary, 'model', this.model));
+    parts.push(formPart(boundary, 'response_format', 'verbose_json'));
+    if (language) parts.push(formPart(boundary, 'language', language));
+    // Request word-level timestamps.
+    parts.push(formPart(boundary, 'timestamp_granularities', 'word'));
+    // Max speech segment duration (controls how often Whisper splits segments).
+    if (this.maxSpeechDurationSec !== undefined) parts.push(formPart(boundary, 'max_speech_duration_s', this.maxSpeechDurationSec));
+    // Min silence duration for VAD segment splitting (lower = more splits at natural pauses).
+    if (this.minSilenceDurationMs !== undefined) parts.push(formPart(boundary, 'min_silence_duration_ms', this.minSilenceDurationMs));
+    // Prompt: previous confirmed text as context for streaming continuity.
+    if (prompt) parts.push(formPart(boundary, 'prompt', prompt));
 
     // End boundary
     parts.push(Buffer.from(`--${boundary}--\r\n`));
