@@ -66,6 +66,19 @@ async function run() {
   check('CRLF model id injects no extra part', cdCount(evilModel()) === baseParts - 1 /* no prompt this run */,
     `parts=${cdCount(evilModel())}`);
 
+  // A CRLF-bearing task (untrusted — #37 wired `task` onto this egress and it can arrive from a
+  // direct POST /bots body) is sanitized like every other value: no forged part, no raw CR/LF.
+  const evilTask = captureFetch();
+  await new TranscriptionClient({ serviceUrl: 'http://stt.test', task: 'transcribe\r\n--forged\r\nContent-Disposition: form-data; name="x"\r\n\r\nboom' })
+    .transcribe(pcm, 'en');
+  const evilTaskBody = evilTask();
+  check('CRLF task injects no extra part', cdCount(evilTaskBody) === baseParts /* +task, −prompt vs baseline */,
+    `baseline=${baseParts} task-run=${cdCount(evilTaskBody)}`);
+  check('no forged `x` part appears from a CRLF task',
+    !/\r\nContent-Disposition: form-data; name="x"/.test(evilTaskBody), 'a forged part header survived the task value');
+  check('emitted `task` value carries no raw CR/LF',
+    !/[\r\n]/.test(valueOf(evilTaskBody, 'task') ?? ''), JSON.stringify(valueOf(evilTaskBody, 'task')));
+
   (globalThis as any).fetch = realFetch;
   if (failed) { console.error(`\n❌ stt crlf: ${failed} check(s) FAILED.`); process.exit(1); }
   console.log('\n✅ stt crlf: CR/LF in any string form value is stripped at the egress — framing cannot be injected.');
