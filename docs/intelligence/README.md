@@ -5,7 +5,7 @@ Working intelligence and post-investigation learnings for the zaki-minutes engin
 way `docs/adr/` holds decisions rather than user docs.
 
 Origin: the July 2026 "non-English meetings transcribe as English" investigation, which turned out to
-be an **external provider regression** (not our code) and produced a shipped fix plus a competitive
+be an **external provider regression** (not our code) and produced a shipped mitigation plus a competitive
 and codebase intelligence sweep.
 
 ## Index
@@ -17,7 +17,12 @@ and codebase intelligence sweep.
 | [meeting-language-plan.md](meeting-language-plan.md) | The phased implementation plan for language selection (auto-detect default + per-meeting pick; account default + live switch as follow-ups). |
 | [meeting-language-execution.md](meeting-language-execution.md) | The task breakdown executed to ship the fix. |
 
-Shipped fix: **PR #37** (`feat(minutes): meeting language selection`).
+Shipped mitigation: **PR #37** (`feat(minutes): meeting language selection`) — lets a user pin the
+language for a **monolingual** non-English meeting so auto-detect can't silently fall to English. It does
+**not** fix true in-meeting code-switching (ar+de+en): pinning one language suppresses the others, so a
+trilingual meeting still depends on the external provider getting auto-detect right (treat "multi" as beta —
+see [meeting-language-plan.md](meeting-language-plan.md)). The root cause is external (Together `whisper-large-v3`
+auto-detect), so #37 is a control surface, not a cure.
 
 ## Key learnings
 

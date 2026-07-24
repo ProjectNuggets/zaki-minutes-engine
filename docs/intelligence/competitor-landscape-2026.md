@@ -48,3 +48,5 @@ Leaders: **Fireflies** (word-level code-switch, beta/Business-gated) · **Sembly
 
 ## Sources (key)
 Laxis State of Meeting Note-Taking 2026; Gladia multilingual/code-switching guide; Bloomberg + Mayer Brown (privacy/legal); Fireflies/Sembly/Notta language docs; Recall.ai 2026 pricing; Vexa.ai. (Full per-product profiles + citations in the research-agent output.)
+
+> Provenance: pricing and quantitative figures (per-seat prices, WER multipliers, market-size/CAGR) are point-in-time, retrieved ~2026-07 from the sources above; treat as directional and re-verify the specific number before quoting it externally. Vendor pricing in particular changes without notice.
