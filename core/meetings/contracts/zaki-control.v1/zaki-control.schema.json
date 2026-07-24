@@ -551,7 +551,8 @@
         },
         "capture_attestation": { "$ref": "#/$defs/CaptureAttestation" },
         "metering": { "$ref": "#/$defs/MeterReservation" },
-        "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$", "maxLength": 5 }
+        "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$", "maxLength": 5 },
+        "meeting_title": { "type": "string", "minLength": 1, "maxLength": 500 }
       }
     },
     "EnsureRequest": {

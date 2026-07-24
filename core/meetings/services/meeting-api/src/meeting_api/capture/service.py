@@ -104,6 +104,7 @@ def _capture_evidence(
     evaluated_at: datetime,
     recording_enabled: bool,
     agent_read_enabled: bool,
+    meeting_title: Optional[str] = None,
 ) -> dict:
     if (
         isinstance(authority.subject_user_id, bool)
@@ -243,6 +244,12 @@ def _capture_evidence(
         "expired_scopes": [],
     }
     metadata["zaki_read"] = {"enabled": agent_read_enabled}
+    # Human meeting title (a calendar event summary or a user-typed name), surfaced by
+    # the read plane's _title() from data['title']. Bounded to the read contract's 1..500;
+    # blank/absent leaves the synthesized "Meeting N".
+    title = (meeting_title or "").strip()
+    if title:
+        metadata["title"] = title[:500]
     return metadata
 
 
@@ -305,6 +312,7 @@ async def request_capture(
     meeting_url: Optional[str] = None,
     language: Optional[str] = None,
     task: Optional[str] = None,
+    meeting_title: Optional[str] = None,
     max_concurrent: Optional[int] = None,
     redis_url: Optional[str] = None,
     meeting_api_url: Optional[str] = None,
@@ -345,6 +353,7 @@ async def request_capture(
         evaluated_at=evaluated_at,
         recording_enabled=recording_enabled,
         agent_read_enabled=agent_read_enabled,
+        meeting_title=meeting_title,
     )
     if max_lifetime_sec is not None and (
         isinstance(max_lifetime_sec, bool)

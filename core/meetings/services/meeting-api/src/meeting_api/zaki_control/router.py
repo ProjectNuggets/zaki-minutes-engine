@@ -730,6 +730,7 @@ def build_router(
                 native_meeting_id=native_meeting_id,
                 meeting_url=meeting_url,
                 language=body.get("language"),
+                meeting_title=body.get("meeting_title"),
                 recording_enabled=policy.audio_days > 0,
                 agent_read_enabled=policy.agent_read_enabled,
                 max_lifetime_sec=min(config.max_capture_seconds, reserved_units * 60),
