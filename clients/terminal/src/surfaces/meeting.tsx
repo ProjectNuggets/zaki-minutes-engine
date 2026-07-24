@@ -17,6 +17,7 @@ import { usePreviewPinTab } from "./previewPinTab";
 import { defaultBotName } from "./defaultBotName";
 import { parseMeetingInput } from "./meetingId";
 import { getJitsiHosts } from "./jitsiHosts";
+import { LANGUAGE_OPTIONS, LANGUAGE_PICKER_HINT } from "./languages";
 import { mintTranscriptShare, mintInvite, listSharedMemberships, type Membership } from "./workspaceApi";
 import { deletePlannedMeeting, getCalendarConfig, setCalendarConfig, getCalendarSyncStatus, syncCalendarNow, type CalendarConfig, type CalendarSyncStamp } from "./plannedApi";
 import { prepTabDescriptor, prepDraftTabDescriptor } from "./meetingPrep";
@@ -647,6 +648,7 @@ function MeetingsList() {
   }, [all, layout]);
   // 'add bot from URL': send OUR bot into a meeting; the watcher attaches the copilot once it transcribes
   const [url, setUrl] = useState("");
+  const [lang, setLang] = useState("");
   const [sent, setSent] = useState<null | "sending" | "ok" | "err">(null);
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const addBot = async () => {
@@ -661,7 +663,7 @@ function MeetingsList() {
       const r = await fetch("/api/bots", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: parsed.platform, native_meeting_id: parsed.native_meeting_id, meeting_url: u, bot_name: defaultBotName() }),
+        body: JSON.stringify({ platform: parsed.platform, native_meeting_id: parsed.native_meeting_id, meeting_url: u, bot_name: defaultBotName(), ...(lang ? { language: lang } : {}) }),
       });
       if (r.ok) {
         setSent("ok"); setUrl("");
@@ -691,11 +693,16 @@ function MeetingsList() {
         <div style={{ display: "flex", gap: 6 }}>
           <input value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void addBot(); }}
             placeholder="Paste a meeting link (Meet / Zoom / Teams / Jitsi)…" style={{ flex: 1, minWidth: 0, background: "var(--panel)", border: "1px solid var(--line2)", borderRadius: 7, padding: "6px 8px", color: "var(--t1)", fontSize: 12, outline: "none" }} />
+          <select value={lang} onChange={(e) => setLang(e.target.value)} title="Meeting language — keep Auto-detect for meetings spoken in multiple languages"
+            style={{ flex: "none", fontSize: 12, padding: "4px 6px", background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 6, color: "var(--t1)" }}>
+            {LANGUAGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
           <button onClick={() => void addBot()} disabled={!url.trim() || sent === "sending"} title="Send the Vexa bot to this meeting"
             style={{ flex: "none", background: url.trim() ? "var(--accent)" : "var(--panel2)", color: url.trim() ? "var(--on-accent)" : "var(--t3)", border: "none", borderRadius: 7, padding: "0 10px", fontSize: 12, fontWeight: 600, cursor: url.trim() ? "pointer" : "default" }}>
             {sent === "sending" ? "…" : "Add bot"}
           </button>
         </div>
+        <div style={{ fontSize: 11, color: "var(--t3)", marginTop: 4, lineHeight: 1.4 }}>{LANGUAGE_PICKER_HINT}</div>
         {sent === "ok" && <div style={{ fontSize: 11, color: "var(--green)", marginTop: 5, lineHeight: 1.4 }}>Bot sent — admit it in the meeting; it appears here once it starts transcribing.</div>}
         {sent === "err" && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 5, lineHeight: 1.4 }}>{errMsg ?? "Couldn't send."}</div>}
         <div style={{ marginTop: 8 }}>
