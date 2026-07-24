@@ -550,7 +550,8 @@
           "maxLength": 2048
         },
         "capture_attestation": { "$ref": "#/$defs/CaptureAttestation" },
-        "metering": { "$ref": "#/$defs/MeterReservation" }
+        "metering": { "$ref": "#/$defs/MeterReservation" },
+        "language": { "type": "string", "pattern": "^[a-z]{2}(-[A-Z]{2})?$", "maxLength": 5 }
       }
     },
     "EnsureRequest": {
