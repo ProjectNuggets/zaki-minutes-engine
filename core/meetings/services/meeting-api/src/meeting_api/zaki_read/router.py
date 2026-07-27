@@ -461,16 +461,17 @@ async def _project_items(
         }
         meeting_id = f"meeting:{meeting['id']}"
         attendees = data.get("attendees", [])
+        # Availability must not depend on the SHAPE of the invite list — same rule the item
+        # projection follows. calendar_sync stores attendees as OBJECTS, so requiring every
+        # entry to be a non-blank string hid every calendar-synced meeting from the INDEX even
+        # though the item endpoint served it. Only the list-ness and the size bound gate
+        # availability; unrenderable entries are dropped by the projection.
         meeting_available = (
             meeting.get("meeting_available") is True
             if metadata_only
             else (
                 isinstance(attendees, list)
                 and len(attendees) <= 1000
-                and all(
-                    isinstance(attendee, str) and attendee.strip()
-                    for attendee in attendees
-                )
             )
         )
         if (
