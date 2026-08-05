@@ -1,0 +1,12 @@
+# .mailmap — display-only author canonicalization for `git log`, `git shortlog`,
+# `git blame` and exports.
+#
+# HISTORY IS NOT REWRITTEN. Every commit's recorded author, committer, dates and
+# hashes are unchanged; this file only changes how those names are *displayed*.
+#
+# `muhra.it@gmail.com` ("Mohammad") was a stale git identity left configured as
+# the global `user.email` on a build machine in this fleet until 2026-07-26.
+# Commits carrying it were authored and pushed by the project owner's own GitHub
+# account; it does not represent a third-party contributor. Owner ruling,
+# 2026-08-05. The misconfiguration is fixed at source; this maps the residue.
+NNGTs <novanuggets.hq@gmail.com> <muhra.it@gmail.com>

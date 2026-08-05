@@ -1,5 +1,7 @@
 # AGENTS.md — the agent front door (in-repo)
 
+> **Verify your git identity before your first commit** — run `git config user.email`; a stale or inherited value silently misattributes every commit in the session (see [`.mailmap`](.mailmap)).
+
 Two constitutions govern everything here — read them on the docs site or in this tree:
 
 - **[Architecture](https://docs.vexa.ai/governance/architecture)** — the P-book
