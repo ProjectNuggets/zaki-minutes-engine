@@ -27,7 +27,7 @@ import os
 import uuid
 from typing import Any, Optional
 
-from ..config_preflight import CONFIG_FAULT_KINDS, cached_probe_verdict
+from ..config_preflight import CONFIG_FAULT_KINDS, cached_probe_verdict, load_declaration
 from ..obs import log_event
 from .env_flags import env_flag
 from .invocation import build_invocation, build_workload_spec, mint_meeting_token
@@ -52,10 +52,21 @@ __all__ = ["request_bot", "construct_meeting_url", "DuplicateMeeting"]
 _ACTIVE_STATUSES = ("requested", "joining", "awaiting_admission", "active", "stopping")
 _TERMINAL_STATUSES = ("completed", "failed")
 
-# How stale an `stt` probe verdict may be and still refuse a spawn (#511 C3). Matches the probe's
-# declared ttl_s: past it the cache holds no actionable opinion, so a spawn proceeds rather than
-# blocking on a verdict that predates the operator's fix.
-_STT_VERDICT_MAX_AGE_S = 60.0
+def _stt_verdict_max_age_s() -> float:
+    """How stale an `stt` verdict may be and still refuse a spawn (#511 C3): the probe's OWN
+    declared ttl_s, READ from the declaration instead of copied into a literal here.
+
+    The copy said 60.0 while the declaration says 900 — #832 raised ttl_s when the probe started
+    transcribing real audio and this constant stayed behind — so for ~840 of every 900 seconds the
+    freshest verdict the cache CAN hold read as "no verdict" and the gate was inert: a rejected
+    token spawned bots that transcribe nothing (#194 R3). ttl_s is the right bound because /health
+    re-probes AT it: younger is the cache's live opinion, older is already due for replacement and
+    refusing on it could outlive the operator's fix. Deliberately NOT fail-closed on staleness —
+    ``cached_probe_verdict`` returns None for "never probed" too, so failing closed would block
+    every spawn wherever STT was never probed (env-state not ``configured``, or nothing polling
+    /health) and couple the product's main action to probe bookkeeping."""
+    probe = ((load_declaration().get("capabilities") or {}).get("stt") or {}).get("probe") or {}
+    return float(probe.get("ttl_s") or 60)
 
 # Construct-URL templates per platform (the parent's ``Platform.construct_meeting_url``, core set).
 # NO jitsi template: a jitsi room name is scoped to a DEPLOYMENT (meet.jit.si is only the public
@@ -217,7 +228,8 @@ async def request_bot(
     #       * the ENV backend only — the verdict describes that endpoint, so a Settings-configured
     #         backend (a different endpoint) must never be blocked by the env one's health.
     if transcribe_enabled and not configured.get("url"):
-        verdict = cached_probe_verdict("stt", max_age_s=_STT_VERDICT_MAX_AGE_S)
+        max_age_s = _stt_verdict_max_age_s()
+        verdict = cached_probe_verdict("stt", max_age_s=max_age_s)
         if verdict is not None and verdict.get("kind") in CONFIG_FAULT_KINDS:
             log_event(
                 "bot_spawn_stt_backend_unhealthy", audience="user", level="warning",
@@ -227,7 +239,7 @@ async def request_bot(
             raise TranscriptionNotConfigured(
                 f"the configured transcription backend is not working: {verdict.get('reason')} — "
                 f"fix TRANSCRIPTION_SERVICE_URL / TRANSCRIPTION_SERVICE_TOKEN; this re-tests within "
-                f"{int(_STT_VERDICT_MAX_AGE_S)}s, or call /health?force=1 to re-probe now"
+                f"{int(max_age_s)}s, or call /health?force=1 to re-probe now"
             )
 
     # 1c. Authenticated-bot mode (#724, deployment-scoped knob — Q1-A): when BOT_AUTHENTICATED is

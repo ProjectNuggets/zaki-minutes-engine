@@ -373,6 +373,28 @@ def test_stale_verdict_does_not_block_a_fixed_backend(monkeypatch):
     assert r.status_code == 201, f"a verdict older than the ttl must not refuse: {r.text}"
 
 
+def test_verdict_inside_the_probe_ttl_still_refuses(monkeypatch):
+    """#194 R3: the gate's staleness bound must BE the probe's declared ttl_s, not a copy of it.
+    The copy (`_STT_VERDICT_MAX_AGE_S = 60.0`) predates #832 raising ttl_s 60 → 900 for the metered
+    audio probe, so for ~840 of every 900 seconds the freshest verdict the cache can hold read as
+    "no opinion" and a rejected token spawned bots that transcribe nothing."""
+    ttl = float(cp.load_declaration()["capabilities"]["stt"]["probe"]["ttl_s"])
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_URL", "http://stt.test")
+    monkeypatch.setenv("TRANSCRIPTION_SERVICE_TOKEN", "bad-token")
+    monkeypatch.delenv("ADMIN_API_URL", raising=False)
+    import time as _t
+    # The oldest a verdict gets before /health re-probes it — i.e. still the cache's live opinion.
+    cp._probe_cache["stt"] = {"at": _t.monotonic() - (ttl - 1),
+                              "result": {"ok": False, "status": 401, "kind": "unauthorized",
+                                         "reason": "unauthorized — the configured token was "
+                                                   "REJECTED by the endpoint"}}
+    repo = InMemoryMeetingRepo()
+    r = _client(repo).post("/bots", headers=HEADERS,
+                           json={"platform": "google_meet", "native_meeting_id": "aged-red"})
+    assert r.status_code == 503, f"a verdict within the probe's own ttl must refuse: {r.text}"
+    assert repo._meetings == {}, f"refused spawn wrote a meeting row: {repo._meetings}"
+
+
 def test_settings_backend_is_not_blocked_by_the_env_backends_verdict(monkeypatch):
     """The claim-together fork (#502 C1): the cached verdict describes the ENV endpoint. When the
     user's Settings backend is what we resolved, the env backend's health is irrelevant — blocking
