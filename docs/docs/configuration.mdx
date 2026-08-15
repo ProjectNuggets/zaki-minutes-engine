@@ -43,8 +43,9 @@ later. The same live check runs at three surfaces, and all three name the same c
 | Boot log + `GET /health` | The `stt` capability row reads `misconfigured` with a `probe.reason`, instead of `configured`. A failing probe warns loudly but never blocks boot. |
 | `POST /bots` | `503` carrying that same reason, **before** any meeting row is written — never a bot that joins and silently transcribes nothing. |
 
-The verdict is cached for 60s, so after fixing the value either wait a minute or call
-`GET /health?force=1` to re-probe immediately.
+The verdict is cached for 15 minutes — the check transcribes a real audio sample, so it is not
+re-run per request — and `POST /bots` refuses on it for exactly that long. After fixing the value,
+call `GET /health?force=1` to re-probe immediately rather than waiting the cache out.
 
 <Note>
 A `404` from the transcriptions path is treated as a **wrong URL**, not as proof of life: a real
