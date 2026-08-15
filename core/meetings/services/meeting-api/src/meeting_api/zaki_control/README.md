@@ -58,6 +58,30 @@ running expiry worker would retain data past the advertised window.
   authority. The store's `UPDATE` is unconditional by design, so `record_capture_status` is what
   keeps a skipped join or a post-terminal move from being written. Recovery walks start from the
   capture's *current* state — replaying a fixed prefix would drive `stopping → joining`.
+- **A failed capture must say WHY.** `failure_code` is the only surviving evidence of a failure:
+  the per-meeting bot workload is destroyed after each run. The engine derives real attribution
+  server-side into `meetings.data` (`completion_reason`, `failure_stage`, `spawn_failure_reason`),
+  and `callbacks.failure_code_from_meeting_data` is the ONE place that translates it into the
+  sealed enum. Neither of those vocabularies overlaps `FailureCode`, so a path that forwards a raw
+  `failure_stage` — as this module once did — silently records `internal_failure` for *every*
+  failure and the column stops carrying information. A cause the map cannot translate keeps
+  `internal_failure` (the schema permits nothing else) and is logged at WARNING with the raw value;
+  a new `CompletionReason` belongs in `_REASON_TO_FAILURE_CODE`, never guessed from the stage.
+
+  The full detail behind a code is one join away, for as long as the meeting row is retained:
+
+  ```sql
+  SELECT c.capture_id, c.failure_code, c.updated_at,
+         m.data ->> 'completion_reason',
+         m.data ->> 'failure_stage',
+         m.data ->> 'spawn_failure_reason',
+         m.data -> 'last_error'
+  FROM zaki_control_captures c
+  JOIN meetings m ON m.id = c.meeting_id
+  WHERE c.state = 'failed'
+  ORDER BY c.updated_at DESC;
+  ```
+
 - **Closed error vocabularies.** Only `ErrorResponse.code` values may leave a control route. There
   is no free-form detail field, and every response is `Cache-Control: no-store`.
 - **Receipts are content-free.** An erasure receipt is an ID, a timestamp and four non-negative
@@ -70,6 +94,8 @@ running expiry worker would retain data past the advertised window.
 - `tests/test_zaki_control.py` — seam behaviour, crash recovery, fencing.
 - `tests/test_zaki_control_conformance.py` — replays all sealed goldens through these primitives,
   plus the host-authority cases the corpus does not isolate on its own.
+- `tests/test_zaki_control_failure_codes.py` — a failed capture records a SPECIFIC cause, per
+  failure class, and a truly unknown one is named in the log rather than recorded silently.
 
 ```bash
 cd core/meetings/services/meeting-api && uv run pytest -q

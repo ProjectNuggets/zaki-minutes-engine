@@ -16,6 +16,13 @@ from .ports import CallbackEvent, Capture, ErasureTarget, OperationClaim, Policy
 _ALLOWED_STATES = {
     "requested", "joining", "awaiting_admission", "active", "stopping", "completed", "failed",
 }
+# `meetings.status` is a SUPERSET of the zaki-control.v1 lifecycle: `needs_help` is a real bot
+# status (the escalation a bot raises while it is still waiting to be admitted) that the sealed
+# control graph has no name for.  Falling into the unknown branch below reported a LIVE capture as
+# `failed` / `internal_failure` — and the settlement path re-records that read onto the row, so the
+# generic code became permanent.  The FSM already treats `needs_help` as an admission wait
+# (`lifecycle.machine._STATUS_TO_FAILURE_STAGE`); project it the same way here.
+_MEETING_STATE_ALIASES = {"needs_help": "awaiting_admission"}
 
 
 class SqlAlchemyControlStore:
@@ -622,6 +629,7 @@ class SqlAlchemyControlStore:
     @staticmethod
     def _capture_from_row(row: Any) -> Capture:
         state = str(row.get("meeting_state") or row["state"])
+        state = _MEETING_STATE_ALIASES.get(state, state)
         failure_code = row["failure_code"]
         if state not in _ALLOWED_STATES:
             state = "failed"
