@@ -12,9 +12,22 @@ read-only agent surface, retention/erasure, and hub-controlled metering.
 - Baseline tag: `v0.12.2`
 - Baseline commit: `034ad78b718b9338182fd80288547419b44337b3`
 - License: Apache-2.0; upstream notices and history remain intact.
-- Activation: off. No ZAKI chart, secret, DNS, database, object store, or cluster resource exists.
-- Current objective: finish the default-off Minutes read, retention, erasure and launch-acceptance
-  path without activating a ZAKI environment prematurely.
+- Activation: **ZAKI operates a deployment of this engine.** Meetings captured through it produce
+  real meeting data — recordings, transcripts and derived summaries — which is held under the
+  retention and erasure policy published in
+  [README.md](README.md#zaki-minutes-retention-and-agent-read-limits). The topology of that
+  deployment (clusters, hostnames, storage locations, credentials) is deliberately not published
+  here.
+- Current objective: complete the remaining Minutes read, retention, erasure and launch-acceptance
+  work, with each feature default-off until its own gates pass.
+
+> **Correction, 2026-08-14.** The activation line above previously read *"Activation: off. No ZAKI
+> chart, secret, DNS, database, object store, or cluster resource exists."* That was accurate when
+> this fork was created on 2026-07-13. It stopped being accurate when ZAKI's deployment went live
+> on 2026-07-28, and was not updated at the time — so from that date until this correction, this
+> public repository understated data collection. The README's "not activated in any ZAKI
+> environment" notice carried the same error over the same period and is corrected with it.
+> Corrected forward rather than by rewriting history.
 
 The `v0.12.2` tag contains the first post-`v0.12.1` delivery batch, including an edge guard, fresh
 install fixes, Jitsi support, and release-pipeline work. Unlike

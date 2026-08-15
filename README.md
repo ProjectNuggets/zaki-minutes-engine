@@ -1,8 +1,13 @@
 > [!IMPORTANT]
 > This repository is **ProjectNuggets/zaki-minutes-engine**, the ZAKI Minutes downstream of
-> Vexa. The fork is pinned to upstream `v0.12.2` (`034ad78b`) and is **not activated in any ZAKI
-> environment**. ZAKI-specific boundaries, provenance, and the staged delivery plan live in
-> [ZAKI-DOWNSTREAM.md](ZAKI-DOWNSTREAM.md) and [ZAKI-PLAN.md](ZAKI-PLAN.md).
+> Vexa. The fork is pinned to upstream `v0.12.2` (`034ad78b`). **ZAKI operates a deployment of this
+> engine**, and the meeting data captured through it is held under the retention and erasure policy
+> described in [ZAKI Minutes retention and Agent-read
+> limits](#zaki-minutes-retention-and-agent-read-limits). ZAKI-specific boundaries, provenance, and
+> the staged delivery plan live in [ZAKI-DOWNSTREAM.md](ZAKI-DOWNSTREAM.md) and
+> [ZAKI-PLAN.md](ZAKI-PLAN.md); [ZAKI-DOWNSTREAM.md](ZAKI-DOWNSTREAM.md) also carries the dated
+> correction to this notice, which said "not activated in any ZAKI environment" after that stopped
+> being true.
 
 <div align="center">
 
@@ -106,8 +111,9 @@ cursors, transport timeouts, and the Agent's ordinary iteration and billing cont
 
 Operators own service URLs, tokens, maximum policy, health controls and activation. The intended
 user control is a shorter per-scope retention choice within that operator ceiling; the user never
-handles service credentials. Minutes remains default-off until the launch acceptance and erasure
-gates pass. See the [sealed read profile](core/meetings/contracts/zaki-read.v1/README.md) and the
+handles service credentials. Each operator owns the activation state of their own deployment;
+ZAKI's is active, and the policy above applies to the data it holds. See the
+[sealed read profile](core/meetings/contracts/zaki-read.v1/README.md) and the
 [runtime read adapter](core/meetings/services/meeting-api/src/meeting_api/zaki_read/README.md).
 
 ---
