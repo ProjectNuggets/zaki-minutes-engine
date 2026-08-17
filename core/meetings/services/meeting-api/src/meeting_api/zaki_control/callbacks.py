@@ -26,6 +26,110 @@ _FAILURE_CODES = {
     "join_denied", "kicked", "meeting_ended_early", "quota_exhausted",
     "invalid_meeting", "capture_timeout", "upstream_unavailable", "internal_failure",
 }
+
+# The engine already knows WHY a capture failed and writes it durably into `meetings.data`:
+#   * `completion_reason`     — lifecycle.v1 CompletionReason, derived server-side by the FSM
+#   * `failure_stage`         — lifecycle.v1 FailureStage, the furthest stage the bot reached
+#   * `spawn_failure_reason`  — written by `mark_spawn_rejected` when the runtime refused before
+#                               any workload existed (`failure_stage` is then `runtime_spawn`)
+# NEITHER vocabulary intersects `_FAILURE_CODES`, and this module only ever read `failure_stage`,
+# so every single failure fell through the floor in `_emit_capture_status` and was recorded as the
+# generic `internal_failure` — 9 of 9 failed captures across staging and prod carry it, which is
+# why a ~28% capture failure rate could not be diagnosed at all.  These maps are the translation
+# that was missing; without them the `failure_code` column carries no information.
+_REASON_TO_FAILURE_CODE: dict[str, str] = {
+    # NOBODY LET THE BOT IN.  `join_denied` is the only sealed code that means "the capture never
+    # joined", and it is the one the Hub already has the right sentence for — "Nobody admitted the
+    # notetaker, so it left the waiting room."  All three reasons here end that way: a host who
+    # actively refused, a signed-out profile refused on our behalf, and — the dominant live class —
+    # the waiting-room timer firing because no human ever clicked Admit.
+    #
+    # `awaiting_admission_timeout` deliberately does NOT map to `capture_timeout`.  That code is
+    # SPOKEN FOR by the Hub: `zaki-prod/src/app/components/minutes/MinutesControls.tsx:387` renders
+    # it as "The capture reached its maximum length and was closed" — the plan lifetime cap.  Giving
+    # it to a bot that never got in would tell the user their capture ran to its limit when it in
+    # fact captured nothing, which is a WORSE lie than the generic code this module is fixing.  The
+    # same file, at :367-373, already diagnosed this exact defect from prod meeting 9
+    # (`awaiting_admission_timeout` recorded as `internal_failure`) and named the fix: "Fix is the
+    # engine's failure-code mapping, not this line."  This is that fix.
+    "awaiting_admission_rejected": "join_denied",
+    "auth_session_missing": "join_denied",
+    "awaiting_admission_timeout": "join_denied",
+    # Ran out of the capture LIFETIME — the one thing `capture_timeout` actually means.
+    "max_bot_time_exceeded": "capture_timeout",
+    # The bot could not drive the join at all — our fault, not the host's.
+    "join_failure": "upstream_unavailable",
+    "validation_error": "invalid_meeting",
+    "evicted": "kicked",
+    # The run ended on its own terms AFTER it went active.  Every one of these is overridden below
+    # when the row says the bot never got that far — see `_PRE_ACTIVE_REASON_TO_FAILURE_CODE`.
+    "left_alone": "meeting_ended_early",
+    "startup_alone": "meeting_ended_early",
+    "stopped": "meeting_ended_early",
+}
+# The SAME `completion_reason` means something different depending on how far the bot got, and the
+# row records that in `failure_stage`.  Ignoring it is what made the first cut of this map wrong:
+# every one of the 10 live failures (8 staging + 2 prod, re-queried 2026-08-17) has `start_time`
+# NULL and a PRE-ACTIVE stage, so `meeting_ended_early` — "The meeting ended before the capture
+# could start" — would have been asserted about a meeting that demonstrably never began, for 6 of
+# them.  Nothing ended; the bot was still outside the door.
+#
+#   staging  3x awaiting_admission_timeout @ awaiting_admission
+#            4x stopped @ awaiting_admission,  1x stopped @ joining
+#   prod     1x awaiting_admission_timeout @ awaiting_admission
+#            1x left_alone @ requested
+#
+# `stopped` pre-active is a capture ABANDONED IN THE LOBBY — the sealed user-terminal reason
+# (`lifecycle.stop.classify_user_stop`: "a user stop is NEVER a failure regardless of stage", but
+# the bot FSM has no terminal other than `failed` before `active`, so a pre-active cancellation
+# lands here).  `zaki-control.v1` has no `cancelled` member, so it gets the closest TRUE sealed
+# code: the notetaker was never admitted.  It stays distinguishable from the timeout in
+# `completion_reason`, which the README's diagnostic join surfaces — the sealed code is the
+# user-facing bucket, not the forensic record.  `data['stop_requested']` is NOT used to narrow this
+# further: only 2 of the 5 live `stopped` rows carry it, so it is not a reliable discriminator.
+_PRE_ACTIVE_REASON_TO_FAILURE_CODE: dict[str, str] = {
+    # `left_alone` means "everyone left" from a bot that was IN the meeting, but the stale-
+    # nonterminal and untracked-zombie sweeps reuse it for a bot reconciled away before it ever got
+    # in.  Pre-active, that is a lost workload — ours — not a short meeting.
+    "left_alone": "upstream_unavailable",
+    "startup_alone": "upstream_unavailable",
+    "stopped": "join_denied",
+}
+# `mark_spawn_rejected` — the runtime refused BEFORE any workload existed.  This is the one class
+# the `completion_reason` vocabulary cannot express, because no bot ever ran to report one.
+_SPAWN_REASON_TO_FAILURE_CODE: dict[str, str] = {
+    "quota_exhausted": "quota_exhausted",
+    "runtime_spawn_failed": "upstream_unavailable",
+}
+# Stages at which the bot had not reached the meeting yet.
+_PRE_ACTIVE_STAGES = frozenset({"requested", "joining", "awaiting_admission", "runtime_spawn"})
+
+
+def failure_code_from_meeting_data(data: object) -> str | None:
+    """Translate the engine's own failure attribution into a sealed ``FailureCode``.
+
+    Returns ``None`` when nothing in the row names a cause — a TRUE unknown, which
+    ``_emit_capture_status`` records as ``internal_failure`` and logs loudly.  Guessing a specific
+    code from the stage alone is deliberately NOT done: a fabricated cause is worse than a named
+    unknown, and every real failure path (bot terminal, reconcile sweep, runtime destroy, spawn
+    rejection) does supply a reason.
+    """
+    if not isinstance(data, dict):
+        return None
+    explicit = data.get("failure_code")
+    if explicit in _FAILURE_CODES:
+        return str(explicit)
+    spawn = _SPAWN_REASON_TO_FAILURE_CODE.get(data.get("spawn_failure_reason"))
+    if spawn is not None:
+        return spawn
+    reason = data.get("completion_reason")
+    if data.get("failure_stage") in _PRE_ACTIVE_STAGES:
+        pre_active = _PRE_ACTIVE_REASON_TO_FAILURE_CODE.get(reason)
+        if pre_active is not None:
+            return pre_active
+    return _REASON_TO_FAILURE_CODE.get(reason)
+
+
 # The sealed zaki-control.v1 lifecycle graph (contract README, "Capture and consent").  This is
 # the ONE authority for legal successors: skipped joins and post-terminal moves are rejected here
 # rather than being silently written by a store UPDATE.
@@ -237,7 +341,17 @@ class ControlCallbackDispatcher:
                 captured_seconds_total=capture_seconds_at(capture, self._now(), ended_at=ended_at),
             )
         if state == "failed":
-            failure_code = failure_code if failure_code in _FAILURE_CODES else "internal_failure"
+            if failure_code not in _FAILURE_CODES:
+                # The contract floor stays, but it is no longer taken silently.  A `failed` capture
+                # whose cause has no name is exactly the state that made the 08-14 failures
+                # undiagnosable; naming the untranslated value here puts the vocabulary gap in the
+                # engine's own log instead of losing it with the deleted per-meeting bot pod.
+                log.warning(
+                    "capture %s (meeting %s) failed with an untranslated cause %r — recording "
+                    "internal_failure; map it in callbacks._REASON_TO_FAILURE_CODE",
+                    capture.capture_id, capture.meeting_id, failure_code,
+                )
+                failure_code = "internal_failure"
         else:
             failure_code = None
         status_data = {
@@ -302,8 +416,7 @@ class ControlCallbackDispatcher:
         capture = await self._store.get_capture_for_meeting(str(meeting_id))
         if capture is None:
             return
-        data = meeting_row.get("data") if isinstance(meeting_row.get("data"), dict) else {}
-        failure = data.get("failure_code") or data.get("failure_stage")
+        failure = failure_code_from_meeting_data(meeting_row.get("data"))
         await self.record_capture_status(capture, state=state, failure_code=failure)
 
     async def reconcile_capture_lifecycle(self, meeting_row: dict) -> None:
@@ -323,8 +436,7 @@ class ControlCallbackDispatcher:
         state = meeting_row.get("status")
         if not isinstance(state, str) or state == "requested":
             return
-        data = meeting_row.get("data") if isinstance(meeting_row.get("data"), dict) else {}
-        failure = data.get("failure_code") or data.get("failure_stage")
+        failure = failure_code_from_meeting_data(meeting_row.get("data"))
         # Reconciliation runs on ITS OWN clock, arbitrarily later than the meeting:
         # a terminal settlement here must be bounded by the meeting's recorded end,
         # not by wall-clock-at-reconcile (which settled 2033s for a 2-min meeting).
