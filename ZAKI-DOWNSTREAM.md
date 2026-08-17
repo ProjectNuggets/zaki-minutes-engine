@@ -29,6 +29,41 @@ read-only agent surface, retention/erasure, and hub-controlled metering.
 > environment" notice carried the same error over the same period and is corrected with it.
 > Corrected forward rather than by rewriting history.
 
+### Which of this engine's capture features ZAKI has actually switched on
+
+"ZAKI operates a deployment of this engine" says that capture is live. It does not say *how* ZAKI's
+users capture a meeting, and the difference is large enough that stating only the former overstates
+what a ZAKI user gets. This engine ships more than ZAKI has enabled; each operator chooses, and this
+is ZAKI's choice as measured in its own production deployment on 2026-08-17.
+
+| capability this engine ships | ZAKI production |
+|---|---|
+| Calendar sync (`PUT /user/calendar`, ICS import) | **off** — no calendar configuration is present |
+| Auto-join sweep (the bot joins a `scheduled` meeting on its own) | **off** — reachable only via calendar/scheduled meetings, which are off |
+| Manual capture request (a user pastes a meeting link) | **on — and it is the only way to start a capture** |
+| Google Meet | on |
+| Microsoft Teams | **off in production** (enabled in a pre-production environment only) |
+| Zoom, Jitsi | off |
+| Authenticated-bot mode (`BOT_AUTHENTICATED` + a stored browser profile) | **off** — the bot joins anonymously |
+
+Two consequences follow, and they are the honest form of the activation notice:
+
+1. **Every ZAKI capture is started by hand.** There is no scheduled or calendar-triggered capture in
+   ZAKI production. Documentation in this repository that describes calendar sync and auto-join
+   describes *this engine's* features, correctly; it does not describe ZAKI's deployment.
+2. **Every ZAKI capture needs a human to admit the bot.** Because authenticated-bot mode is off, the
+   notetaker joins Google Meet as an anonymous external participant, and Google Meet requires a host
+   to admit those. Measured over all captures recorded in both ZAKI environments to date, roughly
+   **28–29% failed**, and 8 of the 10 surviving failures failed for exactly this reason: the bot
+   reached the waiting room with nobody there to let it in. The notetaker's display name is
+   `ZAKI Notetaker`; admitting it is a required step, not an optional one.
+
+Recording the failure rate here because it is a property of the activation state, not a transient
+bug: with anonymous join as the only enabled mode, a capture nobody admits cannot succeed, and that
+is a choice this deployment has made rather than a defect it has hit.
+
+— `minutes-owner`, 2026-08-17
+
 The `v0.12.2` tag contains the first post-`v0.12.1` delivery batch, including an edge guard, fresh
 install fixes, Jitsi support, and release-pipeline work. Unlike
 [the documented `v0.12.1` release](https://github.com/Vexa-ai/vexa/releases/tag/v0.12.1), the
