@@ -67,12 +67,72 @@ async def test_admission_rejected_records_join_denied():
     assert code == "join_denied"
 
 
-async def test_admission_timeout_records_capture_timeout():
-    """Nobody admitted the bot inside the waiting-room window — a timeout, not a refusal."""
+async def test_admission_timeout_says_nobody_admitted_it_not_that_time_ran_out():
+    """The waiting-room timer firing is a JOIN denial, NOT `capture_timeout`.
+
+    The dominant live class: 4 of the 10 failed captures (3 staging + prod meeting 9).  `join_denied`
+    is what the Hub renders as "Nobody admitted the notetaker, so it left the waiting room"
+    (`MinutesControls.tsx:374`), which is exactly what happened.  `capture_timeout` is spoken for by
+    the plan LIFETIME cap and renders as "The capture reached its maximum length and was closed"
+    (:387) — asserting a full-length capture about a bot that captured nothing.
+    """
     code = await _failed_via_lifecycle(
         {"completion_reason": "awaiting_admission_timeout", "failure_stage": "awaiting_admission"}
     )
-    assert code == "capture_timeout"
+    assert code == "join_denied"
+
+
+async def test_the_lifetime_cap_is_the_only_capture_timeout():
+    """`capture_timeout` belongs to the one reason that really is a time limit."""
+    assert await _failed_via_lifecycle(
+        {"completion_reason": "max_bot_time_exceeded", "failure_stage": "active"},
+        from_state="active",
+    ) == "capture_timeout"
+
+
+async def test_a_capture_abandoned_in_the_lobby_did_not_end_a_meeting():
+    """`stopped` — the most common `completion_reason` in live data — is stage-dependent.
+
+    All 5 live `stopped` failures are PRE-ACTIVE with `start_time` NULL (4 at `awaiting_admission`,
+    1 at `joining`): the user cancelled while the bot was still outside the door.
+    `meeting_ended_early` renders as "The meeting ended before the capture could start", which
+    asserts an ending for a meeting that never began — wrong in the most misleading direction.
+    Only a `stopped` that reached `active` is a real early end.
+    """
+    for stage, from_state in (("awaiting_admission", "awaiting_admission"), ("joining", "joining")):
+        assert await _failed_via_lifecycle(
+            {"completion_reason": "stopped", "failure_stage": stage}, from_state=from_state
+        ) == "join_denied", stage
+    assert await _failed_via_lifecycle(
+        {"completion_reason": "stopped", "failure_stage": "active"}, from_state="active"
+    ) == "meeting_ended_early"
+
+
+def test_every_live_failure_row_translates_to_a_specific_code():
+    """Replay of the exact 10 failed captures in staging + prod, re-queried 2026-08-17.
+
+    This is the acceptance assertion for the whole PR: not one of them may land on
+    `internal_failure`, and the two causes that share a stage must not be smeared into a code that
+    blames the wrong party.
+    """
+    live = [
+        ("staging", "awaiting_admission_timeout", "awaiting_admission", "join_denied"),
+        ("staging", "awaiting_admission_timeout", "awaiting_admission", "join_denied"),
+        ("staging", "awaiting_admission_timeout", "awaiting_admission", "join_denied"),
+        ("staging", "stopped", "awaiting_admission", "join_denied"),
+        ("staging", "stopped", "awaiting_admission", "join_denied"),
+        ("staging", "stopped", "awaiting_admission", "join_denied"),
+        ("staging", "stopped", "awaiting_admission", "join_denied"),
+        ("staging", "stopped", "joining", "join_denied"),
+        ("prod", "awaiting_admission_timeout", "awaiting_admission", "join_denied"),
+        ("prod", "left_alone", "requested", "upstream_unavailable"),
+    ]
+    for env, reason, stage, expected in live:
+        code = failure_code_from_meeting_data(
+            {"completion_reason": reason, "failure_stage": stage}
+        )
+        assert code == expected, f"{env} {reason}@{stage} -> {code}"
+        assert code != "internal_failure"
 
 
 async def test_join_failure_records_upstream_unavailable():
@@ -167,12 +227,16 @@ def test_a_bare_failure_stage_is_not_a_cause():
 
 
 def test_a_bot_asking_for_help_is_not_a_failed_capture():
-    """The second `internal_failure` writer: `meetings.status` is a SUPERSET of the control graph.
+    """`meetings.status` is a SUPERSET of the control graph, and the mis-read would be permanent.
 
-    `needs_help` is a live bot escalating while it waits to be admitted.  The read path had no name
-    for it, fell into the unknown branch, and reported the capture as `failed` / `internal_failure`
-    — which the settlement path then writes back onto the row, making the generic code permanent
-    for a capture that was never even finished.
+    `needs_help` is a live bot escalating while it waits to be admitted.  The read path has no name
+    for it, falls into the unknown branch, and reports the capture as `failed` / `internal_failure`
+    — which the settlement path then writes back onto the row, making the generic code permanent for
+    a capture that was never even finished.
+
+    LATENT, NOT OBSERVED: `needs_help` has never occurred in prod or staging, so it contributed
+    nothing to the measured failure rate.  Guarded because it is reachable and the damage is
+    irreversible, not because it has happened.
     """
     from meeting_api.zaki_control.adapters import SqlAlchemyControlStore
 

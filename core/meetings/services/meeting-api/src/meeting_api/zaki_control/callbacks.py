@@ -38,20 +38,62 @@ _FAILURE_CODES = {
 # why a ~28% capture failure rate could not be diagnosed at all.  These maps are the translation
 # that was missing; without them the `failure_code` column carries no information.
 _REASON_TO_FAILURE_CODE: dict[str, str] = {
-    # Never admitted, because a human refused or a signed-out profile was refused for us.
+    # NOBODY LET THE BOT IN.  `join_denied` is the only sealed code that means "the capture never
+    # joined", and it is the one the Hub already has the right sentence for — "Nobody admitted the
+    # notetaker, so it left the waiting room."  All three reasons here end that way: a host who
+    # actively refused, a signed-out profile refused on our behalf, and — the dominant live class —
+    # the waiting-room timer firing because no human ever clicked Admit.
+    #
+    # `awaiting_admission_timeout` deliberately does NOT map to `capture_timeout`.  That code is
+    # SPOKEN FOR by the Hub: `zaki-prod/src/app/components/minutes/MinutesControls.tsx:387` renders
+    # it as "The capture reached its maximum length and was closed" — the plan lifetime cap.  Giving
+    # it to a bot that never got in would tell the user their capture ran to its limit when it in
+    # fact captured nothing, which is a WORSE lie than the generic code this module is fixing.  The
+    # same file, at :367-373, already diagnosed this exact defect from prod meeting 9
+    # (`awaiting_admission_timeout` recorded as `internal_failure`) and named the fix: "Fix is the
+    # engine's failure-code mapping, not this line."  This is that fix.
     "awaiting_admission_rejected": "join_denied",
     "auth_session_missing": "join_denied",
-    # Ran out of time rather than being refused.
-    "awaiting_admission_timeout": "capture_timeout",
+    "awaiting_admission_timeout": "join_denied",
+    # Ran out of the capture LIFETIME — the one thing `capture_timeout` actually means.
     "max_bot_time_exceeded": "capture_timeout",
     # The bot could not drive the join at all — our fault, not the host's.
     "join_failure": "upstream_unavailable",
     "validation_error": "invalid_meeting",
     "evicted": "kicked",
-    # The run ended on its own terms before it could capture anything.
+    # The run ended on its own terms AFTER it went active.  Every one of these is overridden below
+    # when the row says the bot never got that far — see `_PRE_ACTIVE_REASON_TO_FAILURE_CODE`.
     "left_alone": "meeting_ended_early",
     "startup_alone": "meeting_ended_early",
     "stopped": "meeting_ended_early",
+}
+# The SAME `completion_reason` means something different depending on how far the bot got, and the
+# row records that in `failure_stage`.  Ignoring it is what made the first cut of this map wrong:
+# every one of the 10 live failures (8 staging + 2 prod, re-queried 2026-08-17) has `start_time`
+# NULL and a PRE-ACTIVE stage, so `meeting_ended_early` — "The meeting ended before the capture
+# could start" — would have been asserted about a meeting that demonstrably never began, for 6 of
+# them.  Nothing ended; the bot was still outside the door.
+#
+#   staging  3x awaiting_admission_timeout @ awaiting_admission
+#            4x stopped @ awaiting_admission,  1x stopped @ joining
+#   prod     1x awaiting_admission_timeout @ awaiting_admission
+#            1x left_alone @ requested
+#
+# `stopped` pre-active is a capture ABANDONED IN THE LOBBY — the sealed user-terminal reason
+# (`lifecycle.stop.classify_user_stop`: "a user stop is NEVER a failure regardless of stage", but
+# the bot FSM has no terminal other than `failed` before `active`, so a pre-active cancellation
+# lands here).  `zaki-control.v1` has no `cancelled` member, so it gets the closest TRUE sealed
+# code: the notetaker was never admitted.  It stays distinguishable from the timeout in
+# `completion_reason`, which the README's diagnostic join surfaces — the sealed code is the
+# user-facing bucket, not the forensic record.  `data['stop_requested']` is NOT used to narrow this
+# further: only 2 of the 5 live `stopped` rows carry it, so it is not a reliable discriminator.
+_PRE_ACTIVE_REASON_TO_FAILURE_CODE: dict[str, str] = {
+    # `left_alone` means "everyone left" from a bot that was IN the meeting, but the stale-
+    # nonterminal and untracked-zombie sweeps reuse it for a bot reconciled away before it ever got
+    # in.  Pre-active, that is a lost workload — ours — not a short meeting.
+    "left_alone": "upstream_unavailable",
+    "startup_alone": "upstream_unavailable",
+    "stopped": "join_denied",
 }
 # `mark_spawn_rejected` — the runtime refused BEFORE any workload existed.  This is the one class
 # the `completion_reason` vocabulary cannot express, because no bot ever ran to report one.
@@ -81,11 +123,10 @@ def failure_code_from_meeting_data(data: object) -> str | None:
     if spawn is not None:
         return spawn
     reason = data.get("completion_reason")
-    if reason in {"left_alone", "startup_alone"} and data.get("failure_stage") in _PRE_ACTIVE_STAGES:
-        # `left_alone` means "everyone left" from a bot that was IN the meeting, but the stale-
-        # nonterminal and untracked-zombie sweeps reuse it for a bot that was reconciled away
-        # before it ever got in.  Pre-active, that is a lost workload, not a short meeting.
-        return "upstream_unavailable"
+    if data.get("failure_stage") in _PRE_ACTIVE_STAGES:
+        pre_active = _PRE_ACTIVE_REASON_TO_FAILURE_CODE.get(reason)
+        if pre_active is not None:
+            return pre_active
     return _REASON_TO_FAILURE_CODE.get(reason)
 
 

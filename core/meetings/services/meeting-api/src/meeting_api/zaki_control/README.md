@@ -67,6 +67,18 @@ running expiry worker would retain data past the advertised window.
   failure and the column stops carrying information. A cause the map cannot translate keeps
   `internal_failure` (the schema permits nothing else) and is logged at WARNING with the raw value;
   a new `CompletionReason` belongs in `_REASON_TO_FAILURE_CODE`, never guessed from the stage.
+- **The same reason means different things at different stages.** `failure_stage` is part of the
+  key, not decoration: `stopped` and `left_alone` are real endings once the bot went `active`, and
+  something else entirely before it — a lobby cancellation and a lost workload respectively. Every
+  failure measured on 2026-08-17 (8 staging, 2 prod) has `start_time` NULL at a pre-active stage, so
+  a stage-blind map asserts an ending for a meeting that never began. `_PRE_ACTIVE_REASON_TO_FAILURE_CODE`
+  is the override; `data['stop_requested']` is not usable to narrow it further (present on only 2 of
+  the 5 live `stopped` rows).
+- **`capture_timeout` means the LIFETIME cap, not the waiting room.** The Hub renders it as "The
+  capture reached its maximum length and was closed", so only `max_bot_time_exceeded` may claim it.
+  A bot nobody admitted — `awaiting_admission_timeout` — is a `join_denied`, which the Hub already
+  renders as "Nobody admitted the notetaker, so it left the waiting room". Picking the sealed code
+  is picking the sentence the user reads; check the Hub's mapping before adding one.
 
   The full detail behind a code is one join away, for as long as the meeting row is retained:
 

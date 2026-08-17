@@ -18,10 +18,15 @@ _ALLOWED_STATES = {
 }
 # `meetings.status` is a SUPERSET of the zaki-control.v1 lifecycle: `needs_help` is a real bot
 # status (the escalation a bot raises while it is still waiting to be admitted) that the sealed
-# control graph has no name for.  Falling into the unknown branch below reported a LIVE capture as
-# `failed` / `internal_failure` — and the settlement path re-records that read onto the row, so the
-# generic code became permanent.  The FSM already treats `needs_help` as an admission wait
-# (`lifecycle.machine._STATUS_TO_FAILURE_STAGE`); project it the same way here.
+# control graph has no name for.  Falling into the unknown branch below would report a LIVE capture
+# as `failed` / `internal_failure`, and the settlement path re-records that read onto the row, so
+# the generic code would become permanent for a capture that had not even finished.
+#
+# LATENT, NOT OBSERVED: `needs_help` has never occurred in either environment — 0 rows in prod and
+# staging and 0 hits for `data::text LIKE '%needs_help%'` in either status-transition trail, so it
+# contributed NOTHING to the ~29% failure rate this module's fix addresses.  It is guarded because
+# the state is reachable and the mis-read is permanent, not because it has bitten.  The FSM already
+# treats it as an admission wait (`lifecycle.machine._STATUS_TO_FAILURE_STAGE`); match that here.
 _MEETING_STATE_ALIASES = {"needs_help": "awaiting_admission"}
 
 
