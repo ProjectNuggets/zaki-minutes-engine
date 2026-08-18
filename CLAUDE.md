@@ -1,4 +1,5 @@
 @AGENTS.md
+Boot note (2026-08-18): this repository is code only — build, test, publish images. Coordination for the ZAKI deployment of this engine lives in a private operator repo; do not append coordination notes, claims, or handoffs here.
 
 ## Claude Code specifics
 
