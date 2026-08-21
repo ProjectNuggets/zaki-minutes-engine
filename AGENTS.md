@@ -1,5 +1,9 @@
 # AGENTS.md — the agent front door (in-repo)
 
+## §0 — Where coordination lives (2026-08-18)
+
+This repository is code only: build, test, publish images. Coordination for the ZAKI deployment of this engine (claims, findings, owner asks) lives in a private operator repo and is not tracked here. Do not append coordination notes to this repo.
+
 > **Verify your git identity before your first commit** — run `git config user.email`; a stale or inherited value silently misattributes every commit in the session (see [`.mailmap`](.mailmap)).
 
 Two constitutions govern everything here — read them on the docs site or in this tree:
