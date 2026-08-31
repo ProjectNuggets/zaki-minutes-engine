@@ -68,6 +68,7 @@ _TERMINAL_STATUSES = ("completed", "failed")
 # value rather than a copy of it.
 DEFAULT_AUTOMATIC_LEAVE = {"waitingRoomTimeout": 600000, "everyoneLeftTimeout": 120000}
 
+
 def _stt_verdict_max_age_s() -> float:
     """How stale an `stt` verdict may be and still refuse a spawn (#511 C3): the probe's OWN
     declared ttl_s, READ from the declaration instead of copied into a literal here.
