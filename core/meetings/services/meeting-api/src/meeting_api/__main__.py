@@ -333,11 +333,15 @@ def _attach_background_loops(
     stop_interval = float(os.getenv("STOP_RECONCILE_INTERVAL_S", "15"))
     # GENERAL reconcile: ANY non-terminal status whose bot is gone (its row quiet past the grace) is
     # converged to a terminal state through the same lifecycle callback. `stopping` uses stop_grace
-    # (a stop was requested); `active`/etc. use `active_grace`. The active-reap is ADDITIONALLY gated on
-    # runtime WORKLOAD liveness (reconcile.py `_bot_workload_gone`): a meeting whose bot workload is still
-    # alive is NEVER reaped, even past the grace — so a quiet-but-live (silent) bot is safe regardless of
-    # this window. With that gate in place, 300s is a SANE default again (the 86400 env stopgap, which
-    # only worked because it disabled the time-based reap entirely, is no longer needed).
+    # (a stop was requested); `active`/etc. use `active_grace`. That reap is ADDITIONALLY gated on
+    # runtime WORKLOAD liveness (reconcile.py `_probe_bot_workload`, over `_LIVENESS_GATED`): a
+    # meeting whose bot workload is still alive is NEVER reaped, even past the grace — so a
+    # quiet-but-live bot is safe regardless of this window, whether it is silent IN the meeting or
+    # silent WAITING to be let in (L-0177: the pre-active statuses are gated too — a lobby wait
+    # cannot bump `updated_at` at all, and this window used to kill it at 300s while the spawn spec
+    # told the bot to wait 600s). With that gate in place, 300s is a SANE default again (the 86400
+    # env stopgap, which only worked because it disabled the time-based reap entirely, is no longer
+    # needed) — and it is a LATENCY knob for genuinely dead captures, never a liveness one.
     active_grace = float(os.getenv("RECONCILE_ACTIVE_GRACE_S", "300"))
     # Bounded untracked escalation (the zombie-loop fix): a meeting whose workload stays UNTRACKED
     # (runtime 404) CONTINUOUSLY past this window — no runtime re-adoption, no bot callback — is

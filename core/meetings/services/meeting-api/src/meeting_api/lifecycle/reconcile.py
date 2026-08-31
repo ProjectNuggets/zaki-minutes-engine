@@ -105,6 +105,34 @@ _PRE_ACTIVE_NONTERMINAL = frozenset({"requested", "joining", "awaiting_admission
 # EXCLUDED: a stop was requested, so it reaps on its short grace regardless (its bot SHOULD be leaving).
 _LIVE_NONTERMINAL = frozenset({"active", "needs_help"})
 
+# Statuses whose reap MUST be gated on the liveness probe — every non-terminal status EXCEPT
+# `stopping`. (L-0177) The gate used to be `_LIVE_NONTERMINAL` alone, which read the argument as "a
+# bot that HAS REPORTED live may be quiet". The real argument is narrower and it does not turn on
+# having reported: `updated_at` is bumped by status changes and segment/heartbeat persistence, so it
+# is evidence of the bot's health ONLY in states where the bot has something to say. A bot sitting in
+# a waiting room has nothing to say — it is SILENT BY CONSTRUCTION until a human clicks Admit — so
+# quiet time in `requested`/`joining`/`awaiting_admission` is not weak evidence of death, it is NO
+# evidence, and judging the state on silence is judging it on its own definition.
+#
+# Prod, 2026-08-31, all 10 captures: every success waited <=195s in the lobby; all three failures sat
+# at 331-340s total lifetime = `RECONCILE_ACTIVE_GRACE_S` 300 + one 15s sweep tick, and not one
+# carries a bot callback — while the spawn spec told those same bots
+# `automatic_leave.waitingRoomTimeout = 600_000` (``bot_spawn/service.py`` ``DEFAULT_AUTOMATIC_LEAVE``).
+# We killed at 5 minutes a bot we had told to wait 10. Zero counterexamples in 10.
+#
+# The fix is at the JOIN, not at the window: raising `RECONCILE_ACTIVE_GRACE_S` above
+# `waitingRoomTimeout` would silence this dataset and leave the defect — a silent-by-construction
+# state judged on silence — intact, to re-break the next time either number is tuned.
+#
+# `stopping` stays EXEMPT and that is deliberate: a stop was REQUESTED, so its bot should be leaving
+# and its short `stop_grace` is the whole point; it converges on a CONFIRMED teardown below.
+#
+# This is probe-BEFORE-reap, not never-reap. A pre-active workload the runtime confirms terminal is
+# still reaped immediately, a pre-active row with no workload at all still reaps on time, and a
+# continuously-untracked one still escalates on `untracked_grace` — otherwise a genuinely dead
+# pre-active capture would hang forever.
+_LIVENESS_GATED = _LIVE_NONTERMINAL | _PRE_ACTIVE_NONTERMINAL
+
 # runtime.v1 workload states that mean the bot is STILL ALIVE in the meeting (the workload exists and is
 # not torn down). A TRACKED workload in any other state is positive evidence the bot exited. A 404
 # (``get_workload`` → None) is NEITHER: the kernel merely does not know the workload.
@@ -241,14 +269,16 @@ async def reconcile_stale_nonterminal_sweep(
     seen_untracked: set = set()
     now = time.monotonic()
     for meeting_id, status, session_uid, bot_container_id, stop_requested in stale:
-        # LIVENESS GATE (the correctness fix): for a status where a bot is in the meeting and may be
-        # legitimately QUIET (`active`/`needs_help`), `updated_at` staleness is NOT evidence the bot
-        # is gone — segments stop bumping it during silence. Only POSITIVE evidence ("gone": the
-        # kernel TRACKS the workload and reports it terminal) reaps. A 404 ("untracked") is NOT
-        # evidence — a recreated runtime forgets live bots (the orphaned-live-bot incident advanced
-        # a live, capturing meeting to `completed` on exactly that 404). `stopping` is exempt (a
-        # stop was requested → it converges on its grace, gated on a CONFIRMED teardown below).
-        if status in _LIVE_NONTERMINAL and bot_container_id:
+        # LIVENESS GATE (the correctness fix): for a status where a bot may be legitimately QUIET —
+        # in the meeting (`active`/`needs_help`) OR still waiting to get in
+        # (`requested`/`joining`/`awaiting_admission`, L-0177) — `updated_at` staleness is NOT
+        # evidence the bot is gone: segments stop bumping it during silence, and a lobby wait never
+        # bumps it at all. Only POSITIVE evidence ("gone": the kernel TRACKS the workload and reports
+        # it terminal) reaps. A 404 ("untracked") is NOT evidence — a recreated runtime forgets live
+        # bots (the orphaned-live-bot incident advanced a live, capturing meeting to `completed` on
+        # exactly that 404). `stopping` is exempt (a stop was requested → it converges on its grace,
+        # gated on a CONFIRMED teardown below).
+        if status in _LIVENESS_GATED and bot_container_id:
             probe = await _probe_bot_workload(runtime, bot_container_id, log=log)
             if probe == "untracked":
                 _log_workload_untracked(meeting_id, status, bot_container_id)

@@ -322,9 +322,11 @@ class SqlAlchemyMeetingRepo:
         """Meetings stuck in ANY non-terminal status whose row has gone quiet past its grace window —
         a bot that exited (or vanished) without ever sending its terminal lifecycle callback leaves the
         row hung here forever. ``updated_at`` is bumped on every status change AND on segment/heartbeat
-        persistence. NOTE: for a LIVE status (`active`/`needs_help`) ``updated_at`` staleness is a
-        CANDIDATE signal only — the sweep additionally gates the active-reap on runtime workload
-        liveness (see ``reconcile.py``), because a silent-but-live bot stops bumping ``updated_at``.
+        persistence. NOTE: for every status EXCEPT `stopping`, ``updated_at`` staleness is a CANDIDATE
+        signal only — the sweep additionally gates the reap on runtime workload liveness (see
+        ``reconcile._LIVENESS_GATED``), because a silent-but-live bot stops bumping ``updated_at``
+        (`active`/`needs_help`) and a bot waiting in a lobby never bumps it at all
+        (`requested`/`joining`/`awaiting_admission` — L-0177).
 
         Per-row window: ``stopping`` uses ``stop_grace`` (a stop was requested — clear it fast),
         everything else uses ``active_grace`` (a longer idle so a momentarily-quiet live bot is not
