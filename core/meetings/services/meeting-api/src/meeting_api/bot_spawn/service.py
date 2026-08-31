@@ -46,11 +46,27 @@ from .url_validation import validate_meeting_url
 
 # Re-exported here (defined in ports.py to avoid an adapters→service circular import) so callers that
 # already do ``from .service import DuplicateMeeting`` (the router) keep working.
-__all__ = ["request_bot", "construct_meeting_url", "DuplicateMeeting"]
+__all__ = [
+    "request_bot", "construct_meeting_url", "DuplicateMeeting", "DEFAULT_AUTOMATIC_LEAVE",
+]
 
 # Non-terminal statuses (parent's active set) — a prior meeting in one of these blocks a new spawn.
 _ACTIVE_STATUSES = ("requested", "joining", "awaiting_admission", "active", "stopping")
 _TERMINAL_STATUSES = ("completed", "failed")
+
+# What we TELL THE BOT to do, in ms. A human-in-the-loop dashboard join needs a forgiving lobby
+# window so a late admit does not fail the meeting. ``everyoneLeftTimeout``: how long the bot lingers
+# ALONE before leaving on its own — 15 min (the O6 default) read as "it didn't autostop" to the owner
+# who ended the meeting and watched the bot stay `active`, billing lobby-priced minutes. 2 min is
+# long enough to survive a host reconnect and short enough to read as self-cleaning.
+#
+# NAMED, not inline, because the reconcile sweep's reap window has to agree with it: promising the
+# bot a 10-minute lobby wait while the control plane reaped it at 5 (L-0177) was a disagreement
+# between two numbers neither of which could see the other. The sweep no longer judges a
+# lobby-waiting bot on time at all (``lifecycle/reconcile.py`` ``_LIVENESS_GATED``), and
+# ``test_reap_window_never_undercuts_the_bots_own_lobby_timeout`` asserts the relation off THIS
+# value rather than a copy of it.
+DEFAULT_AUTOMATIC_LEAVE = {"waitingRoomTimeout": 600000, "everyoneLeftTimeout": 120000}
 
 def _stt_verdict_max_age_s() -> float:
     """How stale an `stt` verdict may be and still refuse a spawn (#511 C3): the probe's OWN
@@ -402,13 +418,7 @@ async def request_bot(
         s3_bucket=auth_s3.get("s3_bucket"),
         s3_access_key=auth_s3.get("s3_access_key"),
         s3_secret_key=auth_s3.get("s3_secret_key"),
-        # A human-in-the-loop dashboard join needs a forgiving lobby window so a late admit does not
-        # fail the meeting. everyoneLeftTimeout: how long the bot lingers ALONE
-        # before leaving on its own — 15 min (the O6 default) read as "it didn't
-        # autostop" to the owner who ended the meeting and watched the bot stay
-        # `active`, billing lobby-priced minutes. 2 min is long enough to survive
-        # a host reconnect and short enough to read as self-cleaning.
-        automatic_leave={"waitingRoomTimeout": 600000, "everyoneLeftTimeout": 120000},
+        automatic_leave=DEFAULT_AUTOMATIC_LEAVE,
     )
 
     # 5. Spawn over runtime.v1.
