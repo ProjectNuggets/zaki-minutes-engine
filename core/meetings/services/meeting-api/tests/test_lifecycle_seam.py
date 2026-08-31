@@ -1047,6 +1047,47 @@ def test_stopping_untracked_past_window_escalates_too():
     assert runtime.deleted == []
 
 
+@pytest.mark.parametrize("status", ["requested", "joining", "awaiting_admission"])
+def test_pre_active_untracked_still_escalates_on_the_window(status):
+    """L-0177 moved the pre-active statuses UNDER the liveness gate, which also moves where their
+    404 is handled: an untracked pre-active workload now short-circuits at the probe instead of
+    reaching `_teardown_verdict`. The convergence must be unchanged — a genuinely lost pre-active
+    workload still escalates to `failed` on the SAME `untracked_grace` window — and the dead DELETE
+    the old path re-issued every 15s is no longer sent at all."""
+    repo = InMemoryMeetingRepo()
+    m = _seed(repo, status=status)
+    repo._meetings[m["id"]]["bot_container_id"] = "wl-lost"
+    runtime = FakeRuntimeClient(workloads={})       # nothing will ever re-adopt it
+    app = create_app(meeting_repo=repo)
+    tracker: dict = {}
+
+    import logging
+
+    from meeting_api.lifecycle.machine import TransitionSource
+
+    async def _post_cb(body: dict):
+        status_code, _ = await app.state.apply_lifecycle_event(
+            body, transition_source=TransitionSource.RUNTIME_DESTROY,
+            force_terminal_on_destroy=True,
+        )
+        return status_code
+
+    def _sweep():
+        return asyncio.run(reconcile_stale_nonterminal_sweep(
+            repo, runtime, _post_cb, stop_grace=45.0, active_grace=300.0,
+            log=logging.getLogger("test.reconcile"),
+            untracked_grace=0.0, untracked_since=tracker,
+        ))
+
+    assert _sweep() == 0                                    # first observation opens the window
+    assert repo._meetings[m["id"]]["status"] == status
+    assert _sweep() == 1, "a continuously-untracked pre-active workload must still converge"
+    assert repo._meetings[m["id"]]["status"] == "failed"
+    assert runtime.deleted == []
+    trail = repo._meetings[m["id"]]["data"].get("status_transition", [])
+    assert any("presumed lost" in (t.get("reason") or "") for t in trail), trail
+
+
 def test_bot_callback_mid_window_cancels_escalation():
     """A sign of life mid-window — the bot's callback/heartbeat bumping the row — cancels the
     escalation: the row leaves the stale listing, the window resets, and a LATER quiet spell starts
