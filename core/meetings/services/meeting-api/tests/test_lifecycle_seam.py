@@ -840,6 +840,108 @@ def test_bot_callback_evidence_still_completes_during_runtime_desync():
     assert repo._meetings[m["id"]]["status"] == "completed"
 
 
+# ── L-0177: the LOBBY WAIT is silent BY CONSTRUCTION — the gate must cover PRE-ACTIVE too ────────
+# The gate above covered only `active`/`needs_help`. But a bot sitting in a waiting room emits no
+# segments and no status change until a human clicks Admit, so its `updated_at` CANNOT move: judging
+# it on quiet time is judging a state that is silent by construction on its silence. Prod evidence
+# (2026-08-31, all 10 captures): every success waited <=195s in the lobby; all three failures cluster
+# at 331-340s total lifetime — RECONCILE_ACTIVE_GRACE_S=300 plus one 15s sweep tick — and not one
+# carries a bot callback. Meanwhile the spawn spec tells that same bot to wait `waitingRoomTimeout`
+# = 600_000 ms. The control plane killed at 5 minutes a bot it had told to wait 10.
+
+
+def _run_general_sweep_prod(app, repo, runtime, *, stop_grace=45.0, active_grace=300.0):
+    """One general sweep posting EXACTLY as the shipped loop does — ``__main__`` calls
+    ``app.state.apply_lifecycle_event`` in-process with ``transition_source=RUNTIME_DESTROY`` and
+    ``force_terminal_on_destroy=True``, NOT the plain HTTP callback. The distinction matters here:
+    `requested` is the FSM's pre-`joining` entry (``machine._PERSISTED_STATUS_TO_BOTSTATUS`` maps it
+    to ``None``), so a terminal posted over it WITHOUT the force flag is a 409 the sweep still counts
+    as reconciled. Using the loop's own poster keeps these tests honest about what prod does."""
+    import logging
+
+    from meeting_api.lifecycle.machine import TransitionSource
+
+    async def _post_cb(body: dict):
+        status_code, _ = await app.state.apply_lifecycle_event(
+            body,
+            transition_source=TransitionSource.RUNTIME_DESTROY,
+            force_terminal_on_destroy=True,
+        )
+        return status_code
+
+    return asyncio.run(reconcile_stale_nonterminal_sweep(
+        repo, runtime, _post_cb, stop_grace=stop_grace, active_grace=active_grace,
+        log=logging.getLogger("test.reconcile"),
+    ))
+
+
+@pytest.mark.parametrize("status", ["requested", "joining", "awaiting_admission"])
+def test_pre_active_with_live_bot_is_not_reaped(status):
+    """THE DEFECT (L-0177): a PRE-ACTIVE meeting quiet past the active grace whose bot WORKLOAD IS
+    ALIVE must NOT be reaped. Lobby silence is not evidence of death — it is what waiting looks
+    like. The first assertion is the one that names the harm: we tore down a live bot."""
+    repo = InMemoryMeetingRepo()
+    m = _seed(repo, status=status)          # default updated_at is far in the past
+    repo._meetings[m["id"]]["bot_container_id"] = "wl-lobby"
+    runtime = FakeRuntimeClient(workloads={"wl-lobby": {"workloadId": "wl-lobby", "state": "running"}})
+    app = create_app(meeting_repo=repo)
+
+    n = _run_general_sweep_prod(app, repo, runtime)
+    assert runtime.deleted == [], f"the control plane KILLED a live bot at {status}"
+    assert n == 0, f"a live pre-active bot ({status}) must not be reaped on quiet time alone"
+    assert repo._meetings[m["id"]]["status"] == status
+
+
+@pytest.mark.parametrize("status", ["requested", "joining", "awaiting_admission"])
+def test_pre_active_with_dead_workload_is_still_reaped(status):
+    """The gate is PROBE-BEFORE-REAP, not never-reap: a pre-active meeting whose workload reached a
+    TERMINAL state (positive evidence the bot exited) still converges to `failed` — otherwise a
+    genuinely dead pre-active capture would hang forever."""
+    repo = InMemoryMeetingRepo()
+    m = _seed(repo, status=status)
+    repo._meetings[m["id"]]["bot_container_id"] = "wl-dead"
+    runtime = FakeRuntimeClient(workloads={"wl-dead": {"workloadId": "wl-dead", "state": "stopped"}})
+    app = create_app(meeting_repo=repo)
+
+    n = _run_general_sweep_prod(app, repo, runtime)
+    assert n == 1, f"a runtime-confirmed dead pre-active bot ({status}) must still reap"
+    assert repo._meetings[m["id"]]["status"] == "failed"
+
+
+@pytest.mark.parametrize("status", ["requested", "joining", "awaiting_admission"])
+def test_pre_active_without_a_workload_still_reaps_on_time(status):
+    """No bot_container_id at all (the spawn never produced a workload): nothing live can be holding
+    the meeting open, so the time-based reap still applies — unchanged by the gate."""
+    repo = InMemoryMeetingRepo()
+    m = _seed(repo, status=status)          # no bot_container_id
+    runtime = FakeRuntimeClient(workloads={})
+    app = create_app(meeting_repo=repo)
+
+    assert _run_general_sweep_prod(app, repo, runtime) == 1
+    assert repo._meetings[m["id"]]["status"] == "failed"
+
+
+def test_reap_window_never_undercuts_the_bots_own_lobby_timeout():
+    """THE JOIN the defect lives at, asserted against the SHIPPED spawn spec rather than a copied
+    constant: the control plane must not reap a lobby-waiting bot inside the window it told that bot
+    to wait. Retune either side and this test moves with it."""
+    from meeting_api.bot_spawn.service import DEFAULT_AUTOMATIC_LEAVE
+
+    waiting_room_s = DEFAULT_AUTOMATIC_LEAVE["waitingRoomTimeout"] / 1000.0
+    repo = InMemoryMeetingRepo()
+    m = _seed(repo, status="awaiting_admission")
+    repo._meetings[m["id"]]["bot_container_id"] = "wl-lobby"
+    runtime = FakeRuntimeClient(workloads={"wl-lobby": {"workloadId": "wl-lobby", "state": "running"}})
+    app = create_app(meeting_repo=repo)
+
+    # The live prod window: active_grace=300s (RECONCILE_ACTIVE_GRACE_S unset in prod, verified
+    # 2026-08-31), the bot's own lobby timeout 600s. It is still legitimately waiting.
+    assert 300.0 < waiting_room_s
+    n = _run_general_sweep_prod(app, repo, runtime, active_grace=300.0)
+    assert n == 0, "reaped a bot that is still inside its own waitingRoomTimeout"
+    assert repo._meetings[m["id"]]["status"] == "awaiting_admission"
+
+
 # ── bounded untracked escalation (the zombie-loop fix) ───────────────────────────────────────────
 # "Untracked, never reap" is right as a reflex but wrong as a steady state: on the process backend a
 # runtime restart kills the workers WITH the runtime (adopt() is a no-op, no callback will ever
@@ -943,6 +1045,47 @@ def test_stopping_untracked_past_window_escalates_too():
     assert _run_general_sweep_esc(client, repo, runtime, tracker, untracked_grace=0.0) == 1
     assert repo._meetings[m["id"]]["status"] == "failed"
     assert runtime.deleted == []
+
+
+@pytest.mark.parametrize("status", ["requested", "joining", "awaiting_admission"])
+def test_pre_active_untracked_still_escalates_on_the_window(status):
+    """L-0177 moved the pre-active statuses UNDER the liveness gate, which also moves where their
+    404 is handled: an untracked pre-active workload now short-circuits at the probe instead of
+    reaching `_teardown_verdict`. The convergence must be unchanged — a genuinely lost pre-active
+    workload still escalates to `failed` on the SAME `untracked_grace` window — and the dead DELETE
+    the old path re-issued every 15s is no longer sent at all."""
+    repo = InMemoryMeetingRepo()
+    m = _seed(repo, status=status)
+    repo._meetings[m["id"]]["bot_container_id"] = "wl-lost"
+    runtime = FakeRuntimeClient(workloads={})       # nothing will ever re-adopt it
+    app = create_app(meeting_repo=repo)
+    tracker: dict = {}
+
+    import logging
+
+    from meeting_api.lifecycle.machine import TransitionSource
+
+    async def _post_cb(body: dict):
+        status_code, _ = await app.state.apply_lifecycle_event(
+            body, transition_source=TransitionSource.RUNTIME_DESTROY,
+            force_terminal_on_destroy=True,
+        )
+        return status_code
+
+    def _sweep():
+        return asyncio.run(reconcile_stale_nonterminal_sweep(
+            repo, runtime, _post_cb, stop_grace=45.0, active_grace=300.0,
+            log=logging.getLogger("test.reconcile"),
+            untracked_grace=0.0, untracked_since=tracker,
+        ))
+
+    assert _sweep() == 0                                    # first observation opens the window
+    assert repo._meetings[m["id"]]["status"] == status
+    assert _sweep() == 1, "a continuously-untracked pre-active workload must still converge"
+    assert repo._meetings[m["id"]]["status"] == "failed"
+    assert runtime.deleted == []
+    trail = repo._meetings[m["id"]]["data"].get("status_transition", [])
+    assert any("presumed lost" in (t.get("reason") or "") for t in trail), trail
 
 
 def test_bot_callback_mid_window_cancels_escalation():
