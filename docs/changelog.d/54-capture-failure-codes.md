@@ -9,9 +9,8 @@
 - **A notetaker that is never let in now says so.** When a notetaker reaches a meeting's waiting room
   and nobody admits it before its waiting-room timeout, that capture is now reported as "nobody
   admitted the notetaker" rather than as an unexplained fault, and it no longer advises a retry that
-  fails the same way. A capture the
-  user cancelled while the notetaker was still waiting outside is reported the same way instead of
-  claiming the meeting had ended, and a capture really stopped by its length limit keeps the
-  maximum-length message that was previously being given to notetakers that captured nothing.
+  fails the same way. A capture the user cancelled while the notetaker was still waiting outside is
+  reported the same way instead of claiming the meeting had ended, and a capture really stopped by
+  its length limit keeps its maximum-length message.
 - **A notetaker that asks for help while it waits is no longer reported as a failed capture.** It is
   still waiting.
